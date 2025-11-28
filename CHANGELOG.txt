@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.1.2] - 2025-11-28
+- Automated release updates.
+- Unit tests added.
 ## [0.1.1] - 2025-11-28
 - Automated release updates.
 - Unit tests added.
