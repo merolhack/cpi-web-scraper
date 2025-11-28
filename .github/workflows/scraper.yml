@@ -8,6 +8,7 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-22.04 # Pinned to 22.04 to support Playwright 1.40 dependencies
+    environment: 'Python script'
     
     steps:
     - name: Checkout code
