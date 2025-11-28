@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.1.6] - 2025-11-28
+- Upgraded `supabase` to `2.24.0` to resolve `TypeError` with modern dependencies.
+
 ## [0.1.5] - 2025-11-28
 - Fixed Supabase client `TypeError` by pinning `httpx` to `<0.28.0`.
 
