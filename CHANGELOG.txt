@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.1.3] - 2025-11-28
+- Fixed GitHub Actions dependency error by pinning runner to ubuntu-22.04.
+
 ## [0.1.2] - 2025-11-28
 - Automated release updates.
 - Unit tests added.
