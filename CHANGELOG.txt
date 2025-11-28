@@ -1,0 +1,10 @@
+# Changelog
+
+## [0.1.1] - 2025-11-28
+- Automated release updates.
+- Unit tests added.
+## [0.1.0] - 2025-11-27
+- Initial release of the Hybrid Web Scraper.
+- Implemented Walmart and Bodega Aurrera scrapers (Playwright).
+- Implemented Chedraui, Soriana, and La Comer scrapers (HTTPX).
+- Integrated Supabase RPC `add_product_and_price`.
