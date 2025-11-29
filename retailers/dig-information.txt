@@ -1,0 +1,25 @@
+$ dig www.lacomer.com.mx
+; <<>> DiG 9.10.6 <<>> www.lacomer.com.mx;; global options: +cmd;; Got answer:;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 48927;; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 1
+;; OPT PSEUDOSECTION:; EDNS: version: 0, flags:; udp: 512;; QUESTION SECTION:;www.lacomer.com.mx.		IN	A
+;; ANSWER SECTION:www.lacomer.com.mx.	155	IN	A	104.16.111.201www.lacomer.com.mx.	155	IN	A	104.17.224.168
+;; Query time: 19 msec;; SERVER: fe80::1%13#53(fe80::1%13);; WHEN: Sat Nov 29 11:14:21 CST 2025;; MSG SIZE  rcvd: 79
+$ dig www.chedraui.com.mx
+; <<>> DiG 9.10.6 <<>> www.chedraui.com.mx;; global options: +cmd;; Got answer:;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 37754;; flags: qr rd ra ad; QUERY: 1, ANSWER: 4, AUTHORITY: 0, ADDITIONAL: 0
+;; QUESTION SECTION:;www.chedraui.com.mx.		IN	A
+;; ANSWER SECTION:www.chedraui.com.mx.	32	IN	A	3.161.20.99www.chedraui.com.mx.	32	IN	A	3.161.20.79www.chedraui.com.mx.	32	IN	A	3.161.20.3www.chedraui.com.mx.	32	IN	A	3.161.20.41
+;; Query time: 8 msec;; SERVER: fe80::1%13#53(fe80::1%13);; WHEN: Sat Nov 29 11:26:26 CST 2025;; MSG SIZE  rcvd: 101
+$ dig www.soriana.com
+; <<>> DiG 9.10.6 <<>> www.soriana.com;; global options: +cmd;; Got answer:;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 20924;; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 1
+;; OPT PSEUDOSECTION:; EDNS: version: 0, flags:; udp: 512;; QUESTION SECTION:;www.soriana.com.		IN	A
+;; ANSWER SECTION:www.soriana.com.	210	IN	A	172.64.145.84www.soriana.com.	210	IN	A	104.18.42.172
+;; Query time: 16 msec;; SERVER: fe80::1%13#53(fe80::1%13);; WHEN: Sat Nov 29 11:27:05 CST 2025;; MSG SIZE  rcvd: 76
+$ dig www.bodegaaurrera.com.mx 
+; <<>> DiG 9.10.6 <<>> www.bodegaaurrera.com.mx;; global options: +cmd;; Got answer:;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 56689;; flags: qr rd ra; QUERY: 1, ANSWER: 3, AUTHORITY: 0, ADDITIONAL: 1
+;; OPT PSEUDOSECTION:; EDNS: version: 0, flags:; udp: 512;; QUESTION SECTION:;www.bodegaaurrera.com.mx.	IN	A
+;; ANSWER SECTION:www.bodegaaurrera.com.mx. 202	IN	CNAME	www.bodegaaurrera.com.mx.edgekey.net.www.bodegaaurrera.com.mx.edgekey.net. 14878 IN CNAME e5418.dscx.akamaiedge.net.e5418.dscx.akamaiedge.net. 1	IN	A	23.216.210.206
+;; Query time: 13 msec;; SERVER: fe80::1%13#53(fe80::1%13);; WHEN: Sat Nov 29 11:37:45 CST 2025;; MSG SIZE  rcvd: 155
+$ dig www.walmart.com.mx 
+; <<>> DiG 9.10.6 <<>> www.walmart.com.mx;; global options: +cmd;; Got answer:;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 23594;; flags: qr rd ra; QUERY: 1, ANSWER: 3, AUTHORITY: 0, ADDITIONAL: 1
+;; OPT PSEUDOSECTION:; EDNS: version: 0, flags:; udp: 512;; QUESTION SECTION:;www.walmart.com.mx.		IN	A
+;; ANSWER SECTION:www.walmart.com.mx.	3399	IN	CNAME	www.walmart.com.mx.edgekey.net.www.walmart.com.mx.edgekey.net.	10063 IN CNAME	e5418.a.akamaiedge.net.e5418.a.akamaiedge.net.	16	IN	A	23.216.210.206
+;; Query time: 14 msec;; SERVER: fe80::1%13#53(fe80::1%13);; WHEN: Sat Nov 29 11:38:17 CST 2025;; MSG SIZE  rcvd: 140

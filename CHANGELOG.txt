@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.8] - 2025-11-29
+- Fixed La Comer scraper using correct API endpoint.
+- Increased timeouts for Walmart and Bodega Aurrera scrapers.
+
 ## [0.1.7] - 2025-11-29
 - Triggering new deployment to verify fix.
 

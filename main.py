@@ -103,7 +103,7 @@ async def scrape_walmart(playwright) -> Optional[float]:
         await page.press("textarea[name='q']", "Enter")
         
         # 3. Click organic result (Look for walmart.com.mx link)
-        await page.wait_for_selector("a[href*='walmart.com.mx']", timeout=10000)
+        await page.wait_for_selector("a[href*='walmart.com.mx']", timeout=30000)
         
         async with page.expect_popup() as popup_info:
             await page.click("a[href*='walmart.com.mx']")
@@ -153,7 +153,7 @@ async def scrape_bodega(playwright) -> Optional[float]:
         await page.wait_for_load_state("networkidle")
         
         try:
-             await page.click("div[data-automation-id='product-container'] a", timeout=5000)
+             await page.click("div[data-automation-id='product-container'] a", timeout=30000)
              await page.wait_for_load_state("domcontentloaded")
              
              next_data = await page.evaluate("window.__NEXT_DATA__")
@@ -241,27 +241,37 @@ async def scrape_soriana() -> Optional[float]:
 async def scrape_lacomer() -> Optional[float]:
     """
     Simulates La Comer internal API.
+    Endpoint provided by user: https://www.lacomer.com.mx/lacomer-api/api/v1/public/articulopasillo/detalleArticulo?artEan=7501055904143&noPagina=1&succId=287
     """
     price = None
     try:
         async with httpx.AsyncClient() as client:
-            # La Comer API (often Algolia or internal)
-            # Endpoint: https://www.lacomer.com.mx/api/articulo/articulos-alias/7501055904143
-            # Or search: https://www.lacomer.com.mx/api/v2/articulo/search
-            
-            url = "https://www.lacomer.com.mx/api/articulo/articulos-alias/7501055904143" # Direct EAN lookup often works
+            url = "https://www.lacomer.com.mx/lacomer-api/api/v1/public/articulopasillo/detalleArticulo"
+            params = {
+                "artEan": PRODUCT_EAN,
+                "noPagina": "1",
+                "succId": "287"
+            }
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/json"
             }
             
-            response = await client.get(url, headers=headers, timeout=10)
+            response = await client.post(url, params=params, headers=headers, timeout=15) # Changed to POST or GET? User URL implies GET params, but usually APIs are GET. Let's try GET first as per URL.
+            # Wait, the user provided a URL with query params, so it's likely GET.
+            # However, some APIs accept POST with query params too. 
+            # Let's stick to GET as implied by the browser-like URL structure.
+            
+            response = await client.get(url, params=params, headers=headers, timeout=15)
+            
             if response.status_code == 200:
                 data = response.json()
-                # Structure: { "precioVenta": 123.45, ... }
-                if 'precioVenta' in data:
-                    price = float(data['precioVenta'])
-                elif 'articulos' in data and len(data['articulos']) > 0:
-                     price = float(data['articulos'][0].get('precioVenta', 0))
+                # Structure based on file provided:
+                # { "estrucArti": { "artPrven": 37, ... } }
+                if 'estrucArti' in data and data['estrucArti']:
+                    price = float(data['estrucArti'].get('artPrven', 0))
+            else:
+                logger.warning(f"[La Comer] API returned {response.status_code}")
 
     except Exception as e:
         logger.error(f"[La Comer] Error: {e}")
