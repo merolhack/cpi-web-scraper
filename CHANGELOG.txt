@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.1.9] - 2025-11-29
+- Added enhanced headers (Referer, Origin, etc.) to La Comer scraper to bypass 403 errors in cloud environment.
+
 ## [0.1.8] - 2025-11-29
 - Fixed La Comer scraper using correct API endpoint.
 - Increased timeouts for Walmart and Bodega Aurrera scrapers.

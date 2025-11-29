@@ -254,14 +254,17 @@ async def scrape_lacomer() -> Optional[float]:
             }
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "application/json"
+                "Accept": "application/json",
+                "Referer": "https://www.lacomer.com.mx/",
+                "Origin": "https://www.lacomer.com.mx",
+                "Host": "www.lacomer.com.mx",
+                "Accept-Language": "es-MX,es;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin"
             }
             
-            response = await client.post(url, params=params, headers=headers, timeout=15) # Changed to POST or GET? User URL implies GET params, but usually APIs are GET. Let's try GET first as per URL.
-            # Wait, the user provided a URL with query params, so it's likely GET.
-            # However, some APIs accept POST with query params too. 
-            # Let's stick to GET as implied by the browser-like URL structure.
-            
+            # Using GET as per previous success locally, but with more headers.
             response = await client.get(url, params=params, headers=headers, timeout=15)
             
             if response.status_code == 200:
