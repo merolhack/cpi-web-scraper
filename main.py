@@ -4,10 +4,10 @@ import os
 import random
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Set
 
 import httpx
-from playwright.async_api import async_playwright, Page
+from playwright.async_api import async_playwright, Page, TimeoutError as PlaywrightTimeoutError
 from supabase import create_client, Client
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -37,6 +37,74 @@ RETAILERS = {
     "SORIANA": 4,
     "LA_COMER": 5
 }
+
+# --- Proxy Manager ---
+class ProxyManager:
+    def __init__(self):
+        self.proxies: List[str] = []
+        self.blacklist: Set[str] = set()
+        self.sources = [
+            "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
+            "https://raw.githubusercontent.com/Monosans/proxy-list/main/proxies/http.txt",
+            "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt",
+            "https://raw.githubusercontent.com/zloi-user/hideip.me/main/https.txt"
+        ]
+
+    async def fetch_proxies(self):
+        """Fetches, merges, and deduplicates proxies from GitHub sources."""
+        logger.info("Fetching proxies from GitHub sources...")
+        fetched_proxies = set()
+        
+        async with httpx.AsyncClient(timeout=10) as client:
+            tasks = [self._fetch_source(client, source) for source in self.sources]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for result in results:
+                if isinstance(result, list):
+                    fetched_proxies.update(result)
+        
+        # Clean proxies: remove schemes if present, ensure ip:port
+        cleaned_proxies = set()
+        for p in fetched_proxies:
+            p = p.strip()
+            if "://" in p:
+                p = p.split("://")[-1]
+            if ":" in p and p.replace(".", "").replace(":", "").isdigit(): # Simple validation
+                cleaned_proxies.add(p)
+
+        self.proxies = list(cleaned_proxies)
+        random.shuffle(self.proxies)
+        logger.info(f"Loaded {len(self.proxies)} unique proxies.")
+        if self.proxies:
+            logger.info(f"Sample proxies: {self.proxies[:5]}")
+
+    async def _fetch_source(self, client: httpx.AsyncClient, url: str) -> List[str]:
+        try:
+            response = await client.get(url)
+            if response.status_code == 200:
+                return [line.strip() for line in response.text.splitlines() if ":" in line]
+        except Exception as e:
+            logger.warning(f"Failed to fetch from {url}: {e}")
+        return []
+
+    def get_random_proxy(self) -> Optional[str]:
+        """Returns a random proxy that is not blacklisted."""
+        available_proxies = [p for p in self.proxies if p not in self.blacklist]
+        if not available_proxies:
+            logger.warning("No available proxies left in the pool!")
+            return None
+        # Always return with http:// scheme for consistency
+        return f"http://{random.choice(available_proxies)}"
+
+    def blacklist_proxy(self, proxy: str):
+        """Adds a proxy to the blacklist."""
+        if proxy:
+            clean_proxy = proxy.replace("http://", "").replace("https://", "")
+            self.blacklist.add(clean_proxy)
+            # logger.warning(f"Blacklisted proxy: {clean_proxy}") # Reduce noise
+
+# Global Proxy Manager Instance
+proxy_manager = ProxyManager()
 
 # --- Supabase Client ---
 def get_supabase_client() -> Optional[Client]:
@@ -74,218 +142,277 @@ async def persist_price(client: Client, retailer_id: int, price: float):
 
 async def scrape_walmart(playwright) -> Optional[float]:
     """
-    Scrapes Walmart Mexico using Trust Propagation via Google.
-    Extracts price from __NEXT_DATA__ JSON.
+    Scrapes Walmart Mexico using Trust Propagation via Google with Proxy Rotation.
     """
-    browser = await playwright.chromium.launch(headless=True)
-    context = await browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        viewport={"width": 1920, "height": 1080}
-    )
-    
-    # Block resources to save bandwidth/RAM
-    await context.route("**/*", lambda route: route.abort() 
-        if route.request.resource_type in ["image", "media", "font", "stylesheet"] 
-        else route.continue_())
-
-    page = await context.new_page()
     price = None
-
-    try:
-        logger.info("[Walmart] Starting Trust Propagation...")
-        # 1. Start at Google
-        await page.goto("https://www.google.com.mx")
-        await page.wait_for_selector("textarea[name='q']") 
+    retries = 5
+    
+    for attempt in range(retries):
+        proxy = proxy_manager.get_random_proxy()
+        logger.info(f"[Walmart] Attempt {attempt+1}/{retries} using proxy: {proxy}")
         
-        # 2. Simulate human typing
-        search_query = f"{PRODUCT_NAME} Walmart"
-        await page.type("textarea[name='q']", search_query, delay=100)
-        await page.press("textarea[name='q']", "Enter")
+        browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox"], proxy={"server": "per-context"})
+        context = None
         
-        # 3. Click organic result (Look for walmart.com.mx link)
-        await page.wait_for_selector("a[href*='walmart.com.mx']", timeout=30000)
-        
-        async with page.expect_popup() as popup_info:
-            await page.click("a[href*='walmart.com.mx']")
-        
-        target_page = await popup_info.value
-        await target_page.wait_for_load_state("domcontentloaded")
-        
-        # 4. Extract from __NEXT_DATA__
-        if "7501055904143" not in target_page.url:
-             logger.info("[Walmart] Navigating to specific product search...")
-             await target_page.goto(f"https://www.walmart.com.mx/productos?Ntt={PRODUCT_EAN}")
-             await target_page.wait_for_load_state("networkidle")
-             await target_page.click("div[data-automation-id='product-container'] a")
-             await target_page.wait_for_load_state("domcontentloaded")
-
-        next_data = await target_page.evaluate("window.__NEXT_DATA__")
-        
-        if next_data:
-            try:
-                product_data = next_data['props']['pageProps']['initialData']['data']['product']
-                price_info = product_data['price']['price'] 
-                price = float(price_info.get('price', 0)) or float(price_info.get('leadPrice', 0))
-            except KeyError:
-                logger.warning("[Walmart] JSON structure mismatch.")
-                pass
+        try:
+            context_args = {
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "viewport": {"width": 1920, "height": 1080}
+            }
+            if proxy:
+                context_args["proxy"] = {"server": proxy}
                 
-    except Exception as e:
-        logger.error(f"[Walmart] Error: {e}")
-    finally:
-        await browser.close()
-        
-    return price
+            context = await browser.new_context(**context_args)
+            
+            # Block resources
+            await context.route("**/*", lambda route: route.abort() 
+                if route.request.resource_type in ["image", "media", "font", "stylesheet"] 
+                else route.continue_())
+
+            page = await context.new_page()
+            
+            # 1. Start at Google
+            await page.goto("https://www.google.com.mx", timeout=30000)
+            await page.wait_for_selector("textarea[name='q']") 
+            
+            # 2. Simulate human typing
+            search_query = f"{PRODUCT_NAME} Walmart"
+            await page.type("textarea[name='q']", search_query, delay=100)
+            await page.press("textarea[name='q']", "Enter")
+            
+            # 3. Click organic result
+            await page.wait_for_selector("a[href*='walmart.com.mx']", timeout=30000)
+            
+            async with page.expect_popup() as popup_info:
+                await page.click("a[href*='walmart.com.mx']")
+            
+            target_page = await popup_info.value
+            await target_page.wait_for_load_state("domcontentloaded")
+            
+            # 4. Extract from __NEXT_DATA__
+            if "7501055904143" not in target_page.url:
+                 logger.info("[Walmart] Navigating to specific product search...")
+                 await target_page.goto(f"https://www.walmart.com.mx/productos?Ntt={PRODUCT_EAN}", timeout=30000)
+                 await target_page.wait_for_load_state("networkidle")
+                 await target_page.click("div[data-automation-id='product-container'] a")
+                 await target_page.wait_for_load_state("domcontentloaded")
+
+            next_data = await target_page.evaluate("window.__NEXT_DATA__")
+            
+            if next_data:
+                try:
+                    product_data = next_data['props']['pageProps']['initialData']['data']['product']
+                    price_info = product_data['price']['price'] 
+                    price = float(price_info.get('price', 0)) or float(price_info.get('leadPrice', 0))
+                    if price:
+                        return price # Success
+                except KeyError:
+                    logger.warning("[Walmart] JSON structure mismatch.")
+                    
+        except (PlaywrightTimeoutError, Exception) as e:
+            logger.warning(f"[Walmart] Attempt {attempt+1} failed: {e}")
+            proxy_manager.blacklist_proxy(proxy)
+        finally:
+            if context:
+                await context.close()
+            await browser.close()
+            
+    return None
 
 async def scrape_bodega(playwright) -> Optional[float]:
     """
-    Scrapes Bodega Aurrera.
+    Scrapes Bodega Aurrera with Proxy Rotation.
     """
-    browser = await playwright.chromium.launch(headless=True)
-    context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    page = await context.new_page()
     price = None
+    retries = 5
     
-    try:
-        logger.info("[Bodega] Starting extraction...")
-        url = f"https://www.bodegaaurrera.com.mx/productos?Ntt={PRODUCT_EAN}"
-        await page.goto(url)
-        await page.wait_for_load_state("networkidle")
+    for attempt in range(retries):
+        proxy = proxy_manager.get_random_proxy()
+        logger.info(f"[Bodega] Attempt {attempt+1}/{retries} using proxy: {proxy}")
+        
+        browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox"], proxy={"server": "per-context"})
+        context = None
         
         try:
-             await page.click("div[data-automation-id='product-container'] a", timeout=30000)
-             await page.wait_for_load_state("domcontentloaded")
-             
-             next_data = await page.evaluate("window.__NEXT_DATA__")
-             if next_data:
-                 product_data = next_data['props']['pageProps']['initialData']['data']['product']
-                 price_info = product_data['price']['price']
-                 price = float(price_info.get('price', 0)) or float(price_info.get('leadPrice', 0))
-        except Exception as e:
-            logger.error(f"[Bodega] Product not found or layout changed: {e}")
+            context_args = {
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            if proxy:
+                context_args["proxy"] = {"server": proxy}
+                
+            context = await browser.new_context(**context_args)
+            page = await context.new_page()
+            
+            url = f"https://www.bodegaaurrera.com.mx/productos?Ntt={PRODUCT_EAN}"
+            await page.goto(url, timeout=30000)
+            await page.wait_for_load_state("networkidle")
+            
+            await page.click("div[data-automation-id='product-container'] a", timeout=30000)
+            await page.wait_for_load_state("domcontentloaded")
+            
+            next_data = await page.evaluate("window.__NEXT_DATA__")
+            if next_data:
+                product_data = next_data['props']['pageProps']['initialData']['data']['product']
+                price_info = product_data['price']['price']
+                price = float(price_info.get('price', 0)) or float(price_info.get('leadPrice', 0))
+                if price:
+                    return price # Success
 
-    except Exception as e:
-        logger.error(f"[Bodega] Error: {e}")
-    finally:
-        await browser.close()
-        
-    return price
+        except (PlaywrightTimeoutError, Exception) as e:
+            logger.warning(f"[Bodega] Attempt {attempt+1} failed: {e}")
+            proxy_manager.blacklist_proxy(proxy)
+        finally:
+            if context:
+                await context.close()
+            await browser.close()
+            
+    return None
 
 
 # --- Soft Target Scrapers (HTTPX) ---
 
 async def scrape_chedraui() -> Optional[float]:
     """
-    Simulates VTEX Search API call for Chedraui.
+    Simulates VTEX Search API call for Chedraui with Proxy Rotation.
     """
     price = None
-    try:
-        async with httpx.AsyncClient() as client:
-            url = f"https://www.chedraui.com.mx/api/catalog_system/pub/products/search?ft={PRODUCT_EAN}"
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "application/json"
-            }
-            
-            response = await client.get(url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if data and len(data) > 0:
-                    item = data[0]
-                    price = item['items'][0]['sellers'][0]['commertialOffer']['Price']
-            else:
-                logger.warning(f"[Chedraui] API returned {response.status_code}")
-                
-    except Exception as e:
-        logger.error(f"[Chedraui] Error: {e}")
+    retries = 5
+    
+    for attempt in range(retries):
+        proxy = proxy_manager.get_random_proxy()
+        logger.info(f"[Chedraui] Attempt {attempt+1}/{retries} using proxy: {proxy}")
         
-    return float(price) if price else None
+        try:
+            async with httpx.AsyncClient(proxies=proxy, timeout=10) as client:
+                url = f"https://www.chedraui.com.mx/api/catalog_system/pub/products/search?ft={PRODUCT_EAN}"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "application/json"
+                }
+                
+                response = await client.get(url, headers=headers)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data and len(data) > 0:
+                        item = data[0]
+                        price = item['items'][0]['sellers'][0]['commertialOffer']['Price']
+                        return float(price)
+                elif response.status_code in [403, 502, 503]:
+                    logger.warning(f"[Chedraui] Blocked/Error {response.status_code}")
+                    proxy_manager.blacklist_proxy(proxy)
+                else:
+                    logger.warning(f"[Chedraui] API returned {response.status_code}")
+                    
+        except (httpx.ConnectError, httpx.TimeoutException, Exception) as e:
+            logger.warning(f"[Chedraui] Attempt {attempt+1} failed: {e}")
+            proxy_manager.blacklist_proxy(proxy)
+            
+    return None
 
 async def scrape_soriana() -> Optional[float]:
     """
-    Simulates Salesforce Commerce Cloud search for Soriana.
-    Includes BeautifulSoup fallback if API returns HTML.
+    Simulates Salesforce Commerce Cloud search for Soriana with Proxy Rotation.
     """
     price = None
-    try:
-        async with httpx.AsyncClient() as client:
-            url = "https://www.soriana.com/on/demandware.store/Sites-Soriana-Site/es_MX/Search-ShowAjax"
-            params = {"q": PRODUCT_EAN, "lang": "es_MX"}
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "application/json, text/html"
-            }
-            
-            response = await client.get(url, params=params, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    if 'productSearch' in data and 'productIds' in data['productSearch']:
-                        # Logic to extract price from JSON if available
-                        pass
-                except json.JSONDecodeError:
-                    # HTML Fallback
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    # Try to find price in product tile
-                    price_element = soup.select_one(".price .sales .value")
-                    if price_element:
-                        price_text = price_element.get_text(strip=True).replace("$", "").replace(",", "")
-                        price = float(price_text)
-            
-    except Exception as e:
-        logger.error(f"[Soriana] Error: {e}")
+    retries = 5
+    
+    for attempt in range(retries):
+        proxy = proxy_manager.get_random_proxy()
+        logger.info(f"[Soriana] Attempt {attempt+1}/{retries} using proxy: {proxy}")
         
-    return price
+        try:
+            async with httpx.AsyncClient(proxies=proxy, timeout=10) as client:
+                url = "https://www.soriana.com/on/demandware.store/Sites-Soriana-Site/es_MX/Search-ShowAjax"
+                params = {"q": PRODUCT_EAN, "lang": "es_MX"}
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "application/json, text/html"
+                }
+                
+                response = await client.get(url, params=params, headers=headers)
+                
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
+                        if 'productSearch' in data and 'productIds' in data['productSearch']:
+                            # Logic to extract price from JSON if available
+                            pass
+                    except json.JSONDecodeError:
+                        # HTML Fallback
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        price_element = soup.select_one(".price .sales .value")
+                        if price_element:
+                            price_text = price_element.get_text(strip=True).replace("$", "").replace(",", "")
+                            return float(price_text)
+                elif response.status_code in [403, 502, 503]:
+                    logger.warning(f"[Soriana] Blocked/Error {response.status_code}")
+                    proxy_manager.blacklist_proxy(proxy)
+                    
+        except (httpx.ConnectError, httpx.TimeoutException, Exception) as e:
+            logger.warning(f"[Soriana] Attempt {attempt+1} failed: {e}")
+            proxy_manager.blacklist_proxy(proxy)
+            
+    return None
 
 async def scrape_lacomer() -> Optional[float]:
     """
-    Simulates La Comer internal API.
+    Simulates La Comer internal API with Proxy Rotation.
     Endpoint provided by user: https://www.lacomer.com.mx/lacomer-api/api/v1/public/articulopasillo/detalleArticulo?artEan=7501055904143&noPagina=1&succId=287
     """
     price = None
-    try:
-        async with httpx.AsyncClient() as client:
-            url = "https://www.lacomer.com.mx/lacomer-api/api/v1/public/articulopasillo/detalleArticulo"
-            params = {
-                "artEan": PRODUCT_EAN,
-                "noPagina": "1",
-                "succId": "287"
-            }
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "application/json",
-                "Referer": "https://www.lacomer.com.mx/",
-                "Origin": "https://www.lacomer.com.mx",
-                "Host": "www.lacomer.com.mx",
-                "Accept-Language": "es-MX,es;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-origin"
-            }
-            
-            # Using GET as per previous success locally, but with more headers.
-            response = await client.get(url, params=params, headers=headers, timeout=15)
-            
-            if response.status_code == 200:
-                data = response.json()
-                # Structure based on file provided:
-                # { "estrucArti": { "artPrven": 37, ... } }
-                if 'estrucArti' in data and data['estrucArti']:
-                    price = float(data['estrucArti'].get('artPrven', 0))
-            else:
-                logger.warning(f"[La Comer] API returned {response.status_code}")
-
-    except Exception as e:
-        logger.error(f"[La Comer] Error: {e}")
+    retries = 5
+    
+    for attempt in range(retries):
+        proxy = proxy_manager.get_random_proxy()
+        logger.info(f"[La Comer] Attempt {attempt+1}/{retries} using proxy: {proxy}")
         
-    return price
+        try:
+            async with httpx.AsyncClient(proxies=proxy, timeout=15) as client:
+                url = "https://www.lacomer.com.mx/lacomer-api/api/v1/public/articulopasillo/detalleArticulo"
+                params = {
+                    "artEan": PRODUCT_EAN,
+                    "noPagina": "1",
+                    "succId": "287"
+                }
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "application/json",
+                    "Referer": "https://www.lacomer.com.mx/",
+                    "Origin": "https://www.lacomer.com.mx",
+                    "Host": "www.lacomer.com.mx",
+                    "Accept-Language": "es-MX,es;q=0.9,en-US;q=0.8,en;q=0.7",
+                    "Sec-Fetch-Dest": "empty",
+                    "Sec-Fetch-Mode": "cors",
+                    "Sec-Fetch-Site": "same-origin"
+                }
+                
+                response = await client.get(url, params=params, headers=headers)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if 'estrucArti' in data and data['estrucArti']:
+                        return float(data['estrucArti'].get('artPrven', 0))
+                elif response.status_code in [403, 502, 503]:
+                    logger.warning(f"[La Comer] Blocked/Error {response.status_code}")
+                    proxy_manager.blacklist_proxy(proxy)
+                else:
+                    logger.warning(f"[La Comer] API returned {response.status_code}")
+
+        except (httpx.ConnectError, httpx.TimeoutException, Exception) as e:
+            logger.warning(f"[La Comer] Attempt {attempt+1} failed: {e}")
+            proxy_manager.blacklist_proxy(proxy)
+            
+    return None
 
 
 # --- Main Orchestrator ---
 
 async def main():
     logger.info("Starting Hybrid Scraper...")
+    
+    # Initialize Proxy Manager
+    await proxy_manager.fetch_proxies()
     
     supabase = get_supabase_client()
     if not supabase:
@@ -297,12 +424,6 @@ async def main():
     
     # Playwright Tasks
     async with async_playwright() as p:
-        # We run playwright tasks sequentially or in parallel? 
-        # Parallel is faster but heavier. Let's do parallel.
-        
-        # Note: Playwright objects (browser) are bound to the async context.
-        # We need to pass the 'p' object to functions.
-        
         # Hard Targets
         walmart_task = scrape_walmart(p)
         bodega_task = scrape_bodega(p)

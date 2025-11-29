@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.10] - 2025-11-29
+- Implemented robust Free Proxy Rotation System.
+- Added `ProxyManager` to fetch and rotate proxies from GitHub sources.
+- Updated all scrapers to use dynamic proxies with retry logic.
+
 ## [0.1.9] - 2025-11-29
 - Added enhanced headers (Referer, Origin, etc.) to La Comer scraper to bypass 403 errors in cloud environment.
 
