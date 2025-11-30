@@ -48,6 +48,14 @@ def get_supabase_client() -> Optional[Client]:
     if not SUPABASE_URL or not SUPABASE_KEY:
         logger.error("Supabase credentials missing.")
         return None
+    
+    # Log Project ID for debugging
+    try:
+        project_id = SUPABASE_URL.split("//")[1].split(".")[0]
+        logger.info(f"Connecting to Supabase Project: {project_id}")
+    except Exception:
+        logger.warning("Could not parse Supabase Project ID.")
+
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 async def persist_price(client: Client, retailer_id: int, price: float):
