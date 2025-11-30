@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.12] - 2025-11-29
+- Integrated `ProxyRotator` into `main.py`.
+- Replaced in-memory `ProxyManager` with Supabase-backed proxy rotation.
+- Scrapers now fetch validated MX proxies from Supabase and report health status.
+
 ## [0.1.11] - 2025-11-29
 - Added Robust Proxy System components (Supabase-backed).
 - Added `scripts/setup_proxies.sql` for database migration.

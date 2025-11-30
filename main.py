@@ -12,6 +12,8 @@ from supabase import create_client, Client
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
+from proxy_client import ProxyRotator
+
 # Load environment variables
 load_dotenv()
 
@@ -38,73 +40,8 @@ RETAILERS = {
     "LA_COMER": 5
 }
 
-# --- Proxy Manager ---
-class ProxyManager:
-    def __init__(self):
-        self.proxies: List[str] = []
-        self.blacklist: Set[str] = set()
-        self.sources = [
-            "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
-            "https://raw.githubusercontent.com/Monosans/proxy-list/main/proxies/http.txt",
-            "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt",
-            "https://raw.githubusercontent.com/zloi-user/hideip.me/main/https.txt"
-        ]
-
-    async def fetch_proxies(self):
-        """Fetches, merges, and deduplicates proxies from GitHub sources."""
-        logger.info("Fetching proxies from GitHub sources...")
-        fetched_proxies = set()
-        
-        async with httpx.AsyncClient(timeout=10) as client:
-            tasks = [self._fetch_source(client, source) for source in self.sources]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for result in results:
-                if isinstance(result, list):
-                    fetched_proxies.update(result)
-        
-        # Clean proxies: remove schemes if present, ensure ip:port
-        cleaned_proxies = set()
-        for p in fetched_proxies:
-            p = p.strip()
-            if "://" in p:
-                p = p.split("://")[-1]
-            if ":" in p and p.replace(".", "").replace(":", "").isdigit(): # Simple validation
-                cleaned_proxies.add(p)
-
-        self.proxies = list(cleaned_proxies)
-        random.shuffle(self.proxies)
-        logger.info(f"Loaded {len(self.proxies)} unique proxies.")
-        if self.proxies:
-            logger.info(f"Sample proxies: {self.proxies[:5]}")
-
-    async def _fetch_source(self, client: httpx.AsyncClient, url: str) -> List[str]:
-        try:
-            response = await client.get(url)
-            if response.status_code == 200:
-                return [line.strip() for line in response.text.splitlines() if ":" in line]
-        except Exception as e:
-            logger.warning(f"Failed to fetch from {url}: {e}")
-        return []
-
-    def get_random_proxy(self) -> Optional[str]:
-        """Returns a random proxy that is not blacklisted."""
-        available_proxies = [p for p in self.proxies if p not in self.blacklist]
-        if not available_proxies:
-            logger.warning("No available proxies left in the pool!")
-            return None
-        # Always return with http:// scheme for consistency
-        return f"http://{random.choice(available_proxies)}"
-
-    def blacklist_proxy(self, proxy: str):
-        """Adds a proxy to the blacklist."""
-        if proxy:
-            clean_proxy = proxy.replace("http://", "").replace("https://", "")
-            self.blacklist.add(clean_proxy)
-            # logger.warning(f"Blacklisted proxy: {clean_proxy}") # Reduce noise
-
-# Global Proxy Manager Instance
-proxy_manager = ProxyManager()
+# Global Proxy Rotator Instance
+rotator = ProxyRotator()
 
 # --- Supabase Client ---
 def get_supabase_client() -> Optional[Client]:
@@ -148,8 +85,11 @@ async def scrape_walmart(playwright) -> Optional[float]:
     retries = 5
     
     for attempt in range(retries):
-        proxy = proxy_manager.get_random_proxy()
-        logger.info(f"[Walmart] Attempt {attempt+1}/{retries} using proxy: {proxy}")
+        proxy_data = rotator.get_proxy()
+        proxy_url = proxy_data['url'] if proxy_data else None
+        proxy_id = proxy_data['proxy_id'] if proxy_data else None
+        
+        logger.info(f"[Walmart] Attempt {attempt+1}/{retries} using proxy: {proxy_url}")
         
         browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox"], proxy={"server": "per-context"})
         context = None
@@ -159,8 +99,8 @@ async def scrape_walmart(playwright) -> Optional[float]:
                 "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "viewport": {"width": 1920, "height": 1080}
             }
-            if proxy:
-                context_args["proxy"] = {"server": proxy}
+            if proxy_url:
+                context_args["proxy"] = {"server": proxy_url}
                 
             context = await browser.new_context(**context_args)
             
@@ -205,13 +145,14 @@ async def scrape_walmart(playwright) -> Optional[float]:
                     price_info = product_data['price']['price'] 
                     price = float(price_info.get('price', 0)) or float(price_info.get('leadPrice', 0))
                     if price:
+                        if proxy_id: rotator.report_success(proxy_id)
                         return price # Success
                 except KeyError:
                     logger.warning("[Walmart] JSON structure mismatch.")
                     
         except (PlaywrightTimeoutError, Exception) as e:
             logger.warning(f"[Walmart] Attempt {attempt+1} failed: {e}")
-            proxy_manager.blacklist_proxy(proxy)
+            if proxy_id: rotator.report_failure(proxy_id)
         finally:
             if context:
                 await context.close()
@@ -227,8 +168,11 @@ async def scrape_bodega(playwright) -> Optional[float]:
     retries = 5
     
     for attempt in range(retries):
-        proxy = proxy_manager.get_random_proxy()
-        logger.info(f"[Bodega] Attempt {attempt+1}/{retries} using proxy: {proxy}")
+        proxy_data = rotator.get_proxy()
+        proxy_url = proxy_data['url'] if proxy_data else None
+        proxy_id = proxy_data['proxy_id'] if proxy_data else None
+        
+        logger.info(f"[Bodega] Attempt {attempt+1}/{retries} using proxy: {proxy_url}")
         
         browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox"], proxy={"server": "per-context"})
         context = None
@@ -237,8 +181,8 @@ async def scrape_bodega(playwright) -> Optional[float]:
             context_args = {
                 "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
-            if proxy:
-                context_args["proxy"] = {"server": proxy}
+            if proxy_url:
+                context_args["proxy"] = {"server": proxy_url}
                 
             context = await browser.new_context(**context_args)
             page = await context.new_page()
@@ -256,11 +200,12 @@ async def scrape_bodega(playwright) -> Optional[float]:
                 price_info = product_data['price']['price']
                 price = float(price_info.get('price', 0)) or float(price_info.get('leadPrice', 0))
                 if price:
+                    if proxy_id: rotator.report_success(proxy_id)
                     return price # Success
 
         except (PlaywrightTimeoutError, Exception) as e:
             logger.warning(f"[Bodega] Attempt {attempt+1} failed: {e}")
-            proxy_manager.blacklist_proxy(proxy)
+            if proxy_id: rotator.report_failure(proxy_id)
         finally:
             if context:
                 await context.close()
@@ -279,11 +224,14 @@ async def scrape_chedraui() -> Optional[float]:
     retries = 5
     
     for attempt in range(retries):
-        proxy = proxy_manager.get_random_proxy()
-        logger.info(f"[Chedraui] Attempt {attempt+1}/{retries} using proxy: {proxy}")
+        proxy_data = rotator.get_proxy()
+        proxy_url = proxy_data['url'] if proxy_data else None
+        proxy_id = proxy_data['proxy_id'] if proxy_data else None
+        
+        logger.info(f"[Chedraui] Attempt {attempt+1}/{retries} using proxy: {proxy_url}")
         
         try:
-            async with httpx.AsyncClient(proxies=proxy, timeout=10) as client:
+            async with httpx.AsyncClient(proxies=proxy_url, timeout=10) as client:
                 url = f"https://www.chedraui.com.mx/api/catalog_system/pub/products/search?ft={PRODUCT_EAN}"
                 headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -297,16 +245,17 @@ async def scrape_chedraui() -> Optional[float]:
                     if data and len(data) > 0:
                         item = data[0]
                         price = item['items'][0]['sellers'][0]['commertialOffer']['Price']
+                        if proxy_id: rotator.report_success(proxy_id)
                         return float(price)
                 elif response.status_code in [403, 502, 503]:
                     logger.warning(f"[Chedraui] Blocked/Error {response.status_code}")
-                    proxy_manager.blacklist_proxy(proxy)
+                    if proxy_id: rotator.report_failure(proxy_id)
                 else:
                     logger.warning(f"[Chedraui] API returned {response.status_code}")
                     
         except (httpx.ConnectError, httpx.TimeoutException, Exception) as e:
             logger.warning(f"[Chedraui] Attempt {attempt+1} failed: {e}")
-            proxy_manager.blacklist_proxy(proxy)
+            if proxy_id: rotator.report_failure(proxy_id)
             
     return None
 
@@ -318,11 +267,14 @@ async def scrape_soriana() -> Optional[float]:
     retries = 5
     
     for attempt in range(retries):
-        proxy = proxy_manager.get_random_proxy()
-        logger.info(f"[Soriana] Attempt {attempt+1}/{retries} using proxy: {proxy}")
+        proxy_data = rotator.get_proxy()
+        proxy_url = proxy_data['url'] if proxy_data else None
+        proxy_id = proxy_data['proxy_id'] if proxy_data else None
+        
+        logger.info(f"[Soriana] Attempt {attempt+1}/{retries} using proxy: {proxy_url}")
         
         try:
-            async with httpx.AsyncClient(proxies=proxy, timeout=10) as client:
+            async with httpx.AsyncClient(proxies=proxy_url, timeout=10) as client:
                 url = "https://www.soriana.com/on/demandware.store/Sites-Soriana-Site/es_MX/Search-ShowAjax"
                 params = {"q": PRODUCT_EAN, "lang": "es_MX"}
                 headers = {
@@ -344,14 +296,15 @@ async def scrape_soriana() -> Optional[float]:
                         price_element = soup.select_one(".price .sales .value")
                         if price_element:
                             price_text = price_element.get_text(strip=True).replace("$", "").replace(",", "")
+                            if proxy_id: rotator.report_success(proxy_id)
                             return float(price_text)
                 elif response.status_code in [403, 502, 503]:
                     logger.warning(f"[Soriana] Blocked/Error {response.status_code}")
-                    proxy_manager.blacklist_proxy(proxy)
+                    if proxy_id: rotator.report_failure(proxy_id)
                     
         except (httpx.ConnectError, httpx.TimeoutException, Exception) as e:
             logger.warning(f"[Soriana] Attempt {attempt+1} failed: {e}")
-            proxy_manager.blacklist_proxy(proxy)
+            if proxy_id: rotator.report_failure(proxy_id)
             
     return None
 
@@ -364,11 +317,14 @@ async def scrape_lacomer() -> Optional[float]:
     retries = 5
     
     for attempt in range(retries):
-        proxy = proxy_manager.get_random_proxy()
-        logger.info(f"[La Comer] Attempt {attempt+1}/{retries} using proxy: {proxy}")
+        proxy_data = rotator.get_proxy()
+        proxy_url = proxy_data['url'] if proxy_data else None
+        proxy_id = proxy_data['proxy_id'] if proxy_data else None
+        
+        logger.info(f"[La Comer] Attempt {attempt+1}/{retries} using proxy: {proxy_url}")
         
         try:
-            async with httpx.AsyncClient(proxies=proxy, timeout=15) as client:
+            async with httpx.AsyncClient(proxies=proxy_url, timeout=15) as client:
                 url = "https://www.lacomer.com.mx/lacomer-api/api/v1/public/articulopasillo/detalleArticulo"
                 params = {
                     "artEan": PRODUCT_EAN,
@@ -392,16 +348,17 @@ async def scrape_lacomer() -> Optional[float]:
                 if response.status_code == 200:
                     data = response.json()
                     if 'estrucArti' in data and data['estrucArti']:
+                        if proxy_id: rotator.report_success(proxy_id)
                         return float(data['estrucArti'].get('artPrven', 0))
                 elif response.status_code in [403, 502, 503]:
                     logger.warning(f"[La Comer] Blocked/Error {response.status_code}")
-                    proxy_manager.blacklist_proxy(proxy)
+                    if proxy_id: rotator.report_failure(proxy_id)
                 else:
                     logger.warning(f"[La Comer] API returned {response.status_code}")
 
         except (httpx.ConnectError, httpx.TimeoutException, Exception) as e:
             logger.warning(f"[La Comer] Attempt {attempt+1} failed: {e}")
-            proxy_manager.blacklist_proxy(proxy)
+            if proxy_id: rotator.report_failure(proxy_id)
             
     return None
 
@@ -411,8 +368,7 @@ async def scrape_lacomer() -> Optional[float]:
 async def main():
     logger.info("Starting Hybrid Scraper...")
     
-    # Initialize Proxy Manager
-    await proxy_manager.fetch_proxies()
+    # Note: Proxies are now fetched via proxy_harvester.py, not here.
     
     supabase = get_supabase_client()
     if not supabase:
