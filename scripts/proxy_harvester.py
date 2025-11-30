@@ -29,7 +29,12 @@ PROXY_SOURCES = [
     "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
     "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
     "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt",
-    "https://raw.githubusercontent.com/zloi-user/hideip.me/main/http.txt"
+    "https://raw.githubusercontent.com/zloi-user/hideip.me/main/http.txt",
+    "https://raw.githubusercontent.com/Anonym0usWork1220/Free-Proxy-List/master/proxy_list.txt",
+    "https://raw.githubusercontent.com/officialputuid/KangProxy/KangProxy/http/http.txt",
+    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt",
+    "https://raw.githubusercontent.com/mmpx12/proxy-list/master/http.txt",
+    "https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt"
 ]
 
 def get_supabase_client() -> Optional[Client]:

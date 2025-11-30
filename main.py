@@ -278,16 +278,18 @@ async def scrape_chedraui(product: Dict[str, Any]) -> Optional[float]:
     price = None
     retries = 5
     ean = product['ean_code']
+    name = product['product_name']
     
     for attempt in range(retries):
         proxy_data = rotator.get_proxy()
         proxy_url = proxy_data['url'] if proxy_data else None
         proxy_id = proxy_data['proxy_id'] if proxy_data else None
         
-        logger.info(f"[Chedraui] Attempt {attempt+1}/{retries} for {ean} using proxy: {proxy_url}")
+        logger.info(f"[Chedraui] Attempt {attempt+1}/{retries} for {name} using proxy: {proxy_url}")
         
         try:
             async with httpx.AsyncClient(proxy=proxy_url, timeout=10) as client:
+                # Try EAN first
                 url = f"https://www.chedraui.com.mx/api/catalog_system/pub/products/search?ft={ean}"
                 headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -303,6 +305,20 @@ async def scrape_chedraui(product: Dict[str, Any]) -> Optional[float]:
                         price = item['items'][0]['sellers'][0]['commertialOffer']['Price']
                         if proxy_id: rotator.report_success(proxy_id)
                         return float(price)
+                    else:
+                        # Fallback to Name Search
+                        logger.info(f"[Chedraui] EAN not found, trying name search for '{name}'")
+                        url_name = f"https://www.chedraui.com.mx/api/catalog_system/pub/products/search?ft={name}"
+                        response_name = await client.get(url_name, headers=headers)
+                        if response_name.status_code == 200:
+                            data_name = response_name.json()
+                            if data_name and len(data_name) > 0:
+                                # Simple heuristic: pick first result
+                                item = data_name[0]
+                                price = item['items'][0]['sellers'][0]['commertialOffer']['Price']
+                                if proxy_id: rotator.report_success(proxy_id)
+                                return float(price)
+
                 elif response.status_code in [403, 502, 503]:
                     logger.warning(f"[Chedraui] Blocked/Error {response.status_code}")
                     if proxy_id: rotator.report_failure(proxy_id)
@@ -322,39 +338,58 @@ async def scrape_soriana(product: Dict[str, Any]) -> Optional[float]:
     price = None
     retries = 5
     ean = product['ean_code']
+    name = product['product_name']
     
     for attempt in range(retries):
         proxy_data = rotator.get_proxy()
         proxy_url = proxy_data['url'] if proxy_data else None
         proxy_id = proxy_data['proxy_id'] if proxy_data else None
         
-        logger.info(f"[Soriana] Attempt {attempt+1}/{retries} for {ean} using proxy: {proxy_url}")
+        logger.info(f"[Soriana] Attempt {attempt+1}/{retries} for {name} using proxy: {proxy_url}")
         
         try:
             async with httpx.AsyncClient(proxy=proxy_url, timeout=10) as client:
                 url = "https://www.soriana.com/on/demandware.store/Sites-Soriana-Site/es_MX/Search-ShowAjax"
-                params = {"q": ean, "lang": "es_MX"}
                 headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Accept": "application/json, text/html"
                 }
                 
+                # Try EAN first
+                params = {"q": ean, "lang": "es_MX"}
                 response = await client.get(url, params=params, headers=headers)
                 
                 if response.status_code == 200:
+                    found = False
                     try:
                         data = response.json()
-                        if 'productSearch' in data and 'productIds' in data['productSearch']:
-                            # Logic to extract price from JSON if available
-                            pass
+                        if 'productSearch' in data and 'productIds' in data['productSearch'] and data['productSearch']['productIds']:
+                            # Need to fetch product details if IDs found, but let's assume we need to parse HTML if JSON is partial
+                            # Actually Soriana JSON usually returns IDs, then we need another call? 
+                            # Or sometimes it returns HTML in 'grid' field?
+                            pass 
                     except json.JSONDecodeError:
                         # HTML Fallback
                         soup = BeautifulSoup(response.text, 'html.parser')
-                        price_element = soup.select_one(".price .sales .value")
-                        if price_element:
+                        if soup.select_one(".price .sales .value"):
+                            price_element = soup.select_one(".price .sales .value")
                             price_text = price_element.get_text(strip=True).replace("$", "").replace(",", "")
                             if proxy_id: rotator.report_success(proxy_id)
                             return float(price_text)
+                        
+                    # Fallback to Name Search if EAN failed
+                    logger.info(f"[Soriana] EAN not found, trying name search for '{name}'")
+                    params_name = {"q": name, "lang": "es_MX"}
+                    response_name = await client.get(url, params=params_name, headers=headers)
+                    
+                    if response_name.status_code == 200:
+                         soup = BeautifulSoup(response_name.text, 'html.parser')
+                         price_element = soup.select_one(".price .sales .value")
+                         if price_element:
+                             price_text = price_element.get_text(strip=True).replace("$", "").replace(",", "")
+                             if proxy_id: rotator.report_success(proxy_id)
+                             return float(price_text)
+
                 elif response.status_code in [403, 502, 503]:
                     logger.warning(f"[Soriana] Blocked/Error {response.status_code}")
                     if proxy_id: rotator.report_failure(proxy_id)
@@ -390,14 +425,15 @@ async def scrape_lacomer(product: Dict[str, Any]) -> Optional[float]:
                 }
                 headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept": "application/json",
+                    "Accept": "application/json, text/plain, */*",
                     "Referer": "https://www.lacomer.com.mx/",
                     "Origin": "https://www.lacomer.com.mx",
                     "Host": "www.lacomer.com.mx",
                     "Accept-Language": "es-MX,es;q=0.9,en-US;q=0.8,en;q=0.7",
                     "Sec-Fetch-Dest": "empty",
                     "Sec-Fetch-Mode": "cors",
-                    "Sec-Fetch-Site": "same-origin"
+                    "Sec-Fetch-Site": "same-origin",
+                    "Connection": "keep-alive"
                 }
                 
                 response = await client.get(url, params=params, headers=headers)

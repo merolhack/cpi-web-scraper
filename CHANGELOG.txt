@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.17] - 2025-11-29
+- Improved Proxy Harvester with more sources (found 50+ active MX proxies in testing).
+- Added Name Search fallback for Chedraui and Soriana when EAN search fails.
+- Added browser headers to La Comer scraper to avoid 403 Forbidden errors.
+- Fixed "No price found" issues for products with valid EANs but missing search index entries.
+
 ## [0.1.16] - 2025-11-29
 - Implemented "Once per Month" scraping logic to avoid redundant data collection.
 - Added batching to `main.py` (processes 3 products per run).
