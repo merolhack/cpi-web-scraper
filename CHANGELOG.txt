@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.18] - 2025-11-29
+- Integrated `proxy_harvester.py` into the main scraping workflow to ensure fresh proxies for every run.
+- Optimized Playwright scrapers (Walmart/Bodega) by blocking images, fonts, and media to reduce timeouts.
+- Improved Soriana scraper to parse search results more robustly (handling multiple selectors).
+- Fixed La Comer scraper headers to mimic a real browser and avoid 403 errors.
+
 ## [0.1.17] - 2025-11-29
 - Improved Proxy Harvester with more sources (found 50+ active MX proxies in testing).
 - Added Name Search fallback for Chedraui and Soriana when EAN search fails.

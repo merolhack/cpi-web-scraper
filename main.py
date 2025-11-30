@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List, Set
 
 import httpx
-from playwright.async_api import async_playwright, Page, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import async_playwright, Page, Playwright, TimeoutError as PlaywrightTimeoutError
 from supabase import create_client, Client
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -209,9 +209,9 @@ async def scrape_walmart(playwright, product: Dict[str, Any]) -> Optional[float]
             
     return None
 
-async def scrape_bodega(playwright, product: Dict[str, Any]) -> Optional[float]:
+async def scrape_bodega(playwright: Playwright, product: Dict[str, Any]) -> Optional[float]:
     """
-    Scrapes Bodega Aurrera with Proxy Rotation.
+    Scrapes Bodega Aurrera using Playwright with Proxy Rotation.
     """
     price = None
     retries = 5
@@ -220,27 +220,26 @@ async def scrape_bodega(playwright, product: Dict[str, Any]) -> Optional[float]:
     
     for attempt in range(retries):
         proxy_data = rotator.get_proxy()
-        proxy_url = proxy_data['url'] if proxy_data else None
+        proxy_server = proxy_data['url'] if proxy_data else None
         proxy_id = proxy_data['proxy_id'] if proxy_data else None
         
-        logger.info(f"[Bodega] Attempt {attempt+1}/{retries} for {name} using proxy: {proxy_url}")
-        
-        launch_args = {"headless": True, "args": ["--no-sandbox"]}
-        if proxy_url:
-            launch_args["proxy"] = {"server": "per-context"}
+        logger.info(f"[Bodega] Attempt {attempt+1}/{retries} for {name} using proxy: {proxy_server}")
 
-        browser = await playwright.chromium.launch(**launch_args)
-        context = None
-        
+        browser = None
         try:
-            context_args = {
-                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
-            if proxy_url:
-                context_args["proxy"] = {"server": proxy_url}
-                
-            context = await browser.new_context(**context_args)
+            browser = await playwright.chromium.launch(
+                headless=True,
+                proxy={"server": proxy_server} if proxy_server else None
+            )
+            
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            
             page = await context.new_page()
+            
+            # Optimize: Block images, fonts, media
+            await page.route("**/*", lambda route: route.abort() if route.request.resource_type in ["image", "media", "font", "stylesheet"] else route.continue_())
             
             url = f"https://www.bodegaaurrera.com.mx/productos?Ntt={ean}"
             await page.goto(url, timeout=30000)
@@ -384,11 +383,17 @@ async def scrape_soriana(product: Dict[str, Any]) -> Optional[float]:
                     
                     if response_name.status_code == 200:
                          soup = BeautifulSoup(response_name.text, 'html.parser')
-                         price_element = soup.select_one(".price .sales .value")
+                         # Try multiple selectors for price in search results
+                         price_element = soup.select_one(".price .sales .value") or \
+                                         soup.select_one(".product-tile .price .value") or \
+                                         soup.select_one(".product-price")
+                                         
                          if price_element:
                              price_text = price_element.get_text(strip=True).replace("$", "").replace(",", "")
                              if proxy_id: rotator.report_success(proxy_id)
                              return float(price_text)
+                         else:
+                             logger.warning(f"[Soriana] Price element not found in search results for '{name}'")
 
                 elif response.status_code in [403, 502, 503]:
                     logger.warning(f"[Soriana] Blocked/Error {response.status_code}")
@@ -426,10 +431,12 @@ async def scrape_lacomer(product: Dict[str, Any]) -> Optional[float]:
                 headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Accept": "application/json, text/plain, */*",
+                    "Accept-Language": "es-MX,es;q=0.9,en-US;q=0.8,en;q=0.7",
                     "Referer": "https://www.lacomer.com.mx/",
                     "Origin": "https://www.lacomer.com.mx",
-                    "Host": "www.lacomer.com.mx",
-                    "Accept-Language": "es-MX,es;q=0.9,en-US;q=0.8,en;q=0.7",
+                    "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                    "Sec-Ch-Ua-Mobile": "?0",
+                    "Sec-Ch-Ua-Platform": '"Windows"',
                     "Sec-Fetch-Dest": "empty",
                     "Sec-Fetch-Mode": "cors",
                     "Sec-Fetch-Site": "same-origin",
