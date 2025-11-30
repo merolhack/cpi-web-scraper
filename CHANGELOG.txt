@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.14] - 2025-11-30
+- Fixed `httpx.AsyncClient` initialization to use `proxy` argument (compatible with httpx >= 0.28.0).
+- Fixed Playwright launch logic to handle cases where no proxy is available (skips `per-context` mode).
+
 ## [0.1.13] - 2025-11-29
 - Added Supabase Project ID logging to debug environment mismatch.
 - Minor improvements to error logging in `main.py`.

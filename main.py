@@ -99,7 +99,11 @@ async def scrape_walmart(playwright) -> Optional[float]:
         
         logger.info(f"[Walmart] Attempt {attempt+1}/{retries} using proxy: {proxy_url}")
         
-        browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox"], proxy={"server": "per-context"})
+        launch_args = {"headless": True, "args": ["--no-sandbox"]}
+        if proxy_url:
+            launch_args["proxy"] = {"server": "per-context"}
+
+        browser = await playwright.chromium.launch(**launch_args)
         context = None
         
         try:
@@ -182,7 +186,11 @@ async def scrape_bodega(playwright) -> Optional[float]:
         
         logger.info(f"[Bodega] Attempt {attempt+1}/{retries} using proxy: {proxy_url}")
         
-        browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox"], proxy={"server": "per-context"})
+        launch_args = {"headless": True, "args": ["--no-sandbox"]}
+        if proxy_url:
+            launch_args["proxy"] = {"server": "per-context"}
+
+        browser = await playwright.chromium.launch(**launch_args)
         context = None
         
         try:
@@ -239,7 +247,7 @@ async def scrape_chedraui() -> Optional[float]:
         logger.info(f"[Chedraui] Attempt {attempt+1}/{retries} using proxy: {proxy_url}")
         
         try:
-            async with httpx.AsyncClient(proxies=proxy_url, timeout=10) as client:
+            async with httpx.AsyncClient(proxy=proxy_url, timeout=10) as client:
                 url = f"https://www.chedraui.com.mx/api/catalog_system/pub/products/search?ft={PRODUCT_EAN}"
                 headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -282,7 +290,7 @@ async def scrape_soriana() -> Optional[float]:
         logger.info(f"[Soriana] Attempt {attempt+1}/{retries} using proxy: {proxy_url}")
         
         try:
-            async with httpx.AsyncClient(proxies=proxy_url, timeout=10) as client:
+            async with httpx.AsyncClient(proxy=proxy_url, timeout=10) as client:
                 url = "https://www.soriana.com/on/demandware.store/Sites-Soriana-Site/es_MX/Search-ShowAjax"
                 params = {"q": PRODUCT_EAN, "lang": "es_MX"}
                 headers = {
@@ -332,7 +340,7 @@ async def scrape_lacomer() -> Optional[float]:
         logger.info(f"[La Comer] Attempt {attempt+1}/{retries} using proxy: {proxy_url}")
         
         try:
-            async with httpx.AsyncClient(proxies=proxy_url, timeout=15) as client:
+            async with httpx.AsyncClient(proxy=proxy_url, timeout=15) as client:
                 url = "https://www.lacomer.com.mx/lacomer-api/api/v1/public/articulopasillo/detalleArticulo"
                 params = {
                     "artEan": PRODUCT_EAN,
