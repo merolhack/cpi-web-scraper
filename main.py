@@ -28,9 +28,6 @@ logger = logging.getLogger(__name__)
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-PRODUCT_EAN = "7501055904143"
-PRODUCT_NAME = "Leche Alpura Deslactosada Light 1L"
-
 # Retailer Mapping (ID from DB)
 RETAILERS = {
     "WALMART": 1,
@@ -58,46 +55,64 @@ def get_supabase_client() -> Optional[Client]:
 
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
-async def persist_price(client: Client, retailer_id: int, price: float):
+async def fetch_active_products(client: Client) -> List[Dict[str, Any]]:
+    """
+    Fetches active products from the database.
+    """
+    try:
+        response = client.table("cpi_products") \
+            .select("product_id, ean_code, product_name, country_id, category_id") \
+            .eq("is_active_product", True) \
+            .execute()
+        
+        products = response.data
+        logger.info(f"Fetched {len(products)} active products.")
+        return products
+    except Exception as e:
+        logger.error(f"Failed to fetch products: {e}")
+        return []
+
+async def persist_price(client: Client, product: Dict[str, Any], retailer_id: int, price: float):
     """
     Persists the price to Supabase via RPC `add_product_and_price`.
-    Verified against API-Specification.txt.
     """
     if not client:
         return
 
     payload = {
-        "p_ean_code": PRODUCT_EAN,
+        "p_ean_code": product['ean_code'],
         "p_price_value": price,
-        "p_product_name": PRODUCT_NAME,
+        "p_product_name": product['product_name'],
         "p_price_date": datetime.now().strftime("%Y-%m-%d"),
         "p_establishment_id": retailer_id,
-        "p_country_id": 1,
+        "p_country_id": product['country_id'] or 1, # Default to 1 if null
         "p_location_id": 1,
-        "p_category_id": 1
+        "p_category_id": product['category_id'] or 1 # Default to 1 if null
     }
 
     try:
         response = client.rpc("add_product_and_price", payload).execute()
-        logger.info(f"Successfully persisted price ${price} for Retailer {retailer_id}")
+        logger.info(f"Successfully persisted price ${price} for {product['product_name']} at Retailer {retailer_id}")
     except Exception as e:
         logger.error(f"Failed to persist data for Retailer {retailer_id}: {e}")
 
 # --- Hard Target Scrapers (Playwright) ---
 
-async def scrape_walmart(playwright) -> Optional[float]:
+async def scrape_walmart(playwright, product: Dict[str, Any]) -> Optional[float]:
     """
     Scrapes Walmart Mexico using Trust Propagation via Google with Proxy Rotation.
     """
     price = None
     retries = 5
+    ean = product['ean_code']
+    name = product['product_name']
     
     for attempt in range(retries):
         proxy_data = rotator.get_proxy()
         proxy_url = proxy_data['url'] if proxy_data else None
         proxy_id = proxy_data['proxy_id'] if proxy_data else None
         
-        logger.info(f"[Walmart] Attempt {attempt+1}/{retries} using proxy: {proxy_url}")
+        logger.info(f"[Walmart] Attempt {attempt+1}/{retries} for {name} using proxy: {proxy_url}")
         
         launch_args = {"headless": True, "args": ["--no-sandbox"]}
         if proxy_url:
@@ -128,7 +143,7 @@ async def scrape_walmart(playwright) -> Optional[float]:
             await page.wait_for_selector("textarea[name='q']") 
             
             # 2. Simulate human typing
-            search_query = f"{PRODUCT_NAME} Walmart"
+            search_query = f"{name} Walmart"
             await page.type("textarea[name='q']", search_query, delay=100)
             await page.press("textarea[name='q']", "Enter")
             
@@ -142,9 +157,9 @@ async def scrape_walmart(playwright) -> Optional[float]:
             await target_page.wait_for_load_state("domcontentloaded")
             
             # 4. Extract from __NEXT_DATA__
-            if "7501055904143" not in target_page.url:
+            if ean not in target_page.url:
                  logger.info("[Walmart] Navigating to specific product search...")
-                 await target_page.goto(f"https://www.walmart.com.mx/productos?Ntt={PRODUCT_EAN}", timeout=30000)
+                 await target_page.goto(f"https://www.walmart.com.mx/productos?Ntt={ean}", timeout=30000)
                  await target_page.wait_for_load_state("networkidle")
                  await target_page.click("div[data-automation-id='product-container'] a")
                  await target_page.wait_for_load_state("domcontentloaded")
@@ -172,19 +187,21 @@ async def scrape_walmart(playwright) -> Optional[float]:
             
     return None
 
-async def scrape_bodega(playwright) -> Optional[float]:
+async def scrape_bodega(playwright, product: Dict[str, Any]) -> Optional[float]:
     """
     Scrapes Bodega Aurrera with Proxy Rotation.
     """
     price = None
     retries = 5
+    ean = product['ean_code']
+    name = product['product_name']
     
     for attempt in range(retries):
         proxy_data = rotator.get_proxy()
         proxy_url = proxy_data['url'] if proxy_data else None
         proxy_id = proxy_data['proxy_id'] if proxy_data else None
         
-        logger.info(f"[Bodega] Attempt {attempt+1}/{retries} using proxy: {proxy_url}")
+        logger.info(f"[Bodega] Attempt {attempt+1}/{retries} for {name} using proxy: {proxy_url}")
         
         launch_args = {"headless": True, "args": ["--no-sandbox"]}
         if proxy_url:
@@ -203,7 +220,7 @@ async def scrape_bodega(playwright) -> Optional[float]:
             context = await browser.new_context(**context_args)
             page = await context.new_page()
             
-            url = f"https://www.bodegaaurrera.com.mx/productos?Ntt={PRODUCT_EAN}"
+            url = f"https://www.bodegaaurrera.com.mx/productos?Ntt={ean}"
             await page.goto(url, timeout=30000)
             await page.wait_for_load_state("networkidle")
             
@@ -232,23 +249,24 @@ async def scrape_bodega(playwright) -> Optional[float]:
 
 # --- Soft Target Scrapers (HTTPX) ---
 
-async def scrape_chedraui() -> Optional[float]:
+async def scrape_chedraui(product: Dict[str, Any]) -> Optional[float]:
     """
     Simulates VTEX Search API call for Chedraui with Proxy Rotation.
     """
     price = None
     retries = 5
+    ean = product['ean_code']
     
     for attempt in range(retries):
         proxy_data = rotator.get_proxy()
         proxy_url = proxy_data['url'] if proxy_data else None
         proxy_id = proxy_data['proxy_id'] if proxy_data else None
         
-        logger.info(f"[Chedraui] Attempt {attempt+1}/{retries} using proxy: {proxy_url}")
+        logger.info(f"[Chedraui] Attempt {attempt+1}/{retries} for {ean} using proxy: {proxy_url}")
         
         try:
             async with httpx.AsyncClient(proxy=proxy_url, timeout=10) as client:
-                url = f"https://www.chedraui.com.mx/api/catalog_system/pub/products/search?ft={PRODUCT_EAN}"
+                url = f"https://www.chedraui.com.mx/api/catalog_system/pub/products/search?ft={ean}"
                 headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Accept": "application/json"
@@ -275,24 +293,25 @@ async def scrape_chedraui() -> Optional[float]:
             
     return None
 
-async def scrape_soriana() -> Optional[float]:
+async def scrape_soriana(product: Dict[str, Any]) -> Optional[float]:
     """
     Simulates Salesforce Commerce Cloud search for Soriana with Proxy Rotation.
     """
     price = None
     retries = 5
+    ean = product['ean_code']
     
     for attempt in range(retries):
         proxy_data = rotator.get_proxy()
         proxy_url = proxy_data['url'] if proxy_data else None
         proxy_id = proxy_data['proxy_id'] if proxy_data else None
         
-        logger.info(f"[Soriana] Attempt {attempt+1}/{retries} using proxy: {proxy_url}")
+        logger.info(f"[Soriana] Attempt {attempt+1}/{retries} for {ean} using proxy: {proxy_url}")
         
         try:
             async with httpx.AsyncClient(proxy=proxy_url, timeout=10) as client:
                 url = "https://www.soriana.com/on/demandware.store/Sites-Soriana-Site/es_MX/Search-ShowAjax"
-                params = {"q": PRODUCT_EAN, "lang": "es_MX"}
+                params = {"q": ean, "lang": "es_MX"}
                 headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Accept": "application/json, text/html"
@@ -324,26 +343,26 @@ async def scrape_soriana() -> Optional[float]:
             
     return None
 
-async def scrape_lacomer() -> Optional[float]:
+async def scrape_lacomer(product: Dict[str, Any]) -> Optional[float]:
     """
     Simulates La Comer internal API with Proxy Rotation.
-    Endpoint provided by user: https://www.lacomer.com.mx/lacomer-api/api/v1/public/articulopasillo/detalleArticulo?artEan=7501055904143&noPagina=1&succId=287
     """
     price = None
     retries = 5
+    ean = product['ean_code']
     
     for attempt in range(retries):
         proxy_data = rotator.get_proxy()
         proxy_url = proxy_data['url'] if proxy_data else None
         proxy_id = proxy_data['proxy_id'] if proxy_data else None
         
-        logger.info(f"[La Comer] Attempt {attempt+1}/{retries} using proxy: {proxy_url}")
+        logger.info(f"[La Comer] Attempt {attempt+1}/{retries} for {ean} using proxy: {proxy_url}")
         
         try:
             async with httpx.AsyncClient(proxy=proxy_url, timeout=15) as client:
                 url = "https://www.lacomer.com.mx/lacomer-api/api/v1/public/articulopasillo/detalleArticulo"
                 params = {
-                    "artEan": PRODUCT_EAN,
+                    "artEan": ean,
                     "noPagina": "1",
                     "succId": "287"
                 }
@@ -384,54 +403,56 @@ async def scrape_lacomer() -> Optional[float]:
 async def main():
     logger.info("Starting Hybrid Scraper...")
     
-    # Note: Proxies are now fetched via proxy_harvester.py, not here.
-    
     supabase = get_supabase_client()
     if not supabase:
         logger.error("Aborting: Supabase client not initialized.")
         return
 
-    # Define tasks
-    tasks = []
-    
-    # Playwright Tasks
+    # 1. Fetch Active Products
+    products = await fetch_active_products(supabase)
+    if not products:
+        logger.warning("No active products found to scrape.")
+        return
+
+    # 2. Iterate through products
     async with async_playwright() as p:
-        # Hard Targets
-        walmart_task = scrape_walmart(p)
-        bodega_task = scrape_bodega(p)
-        
-        # Soft Targets
-        chedraui_task = scrape_chedraui()
-        soriana_task = scrape_soriana()
-        lacomer_task = scrape_lacomer()
-        
-        # Execute all
-        results = await asyncio.gather(
-            walmart_task, 
-            bodega_task, 
-            chedraui_task, 
-            soriana_task, 
-            lacomer_task, 
-            return_exceptions=True
-        )
-        
-        # Process Results
-        retailer_ids = [
-            RETAILERS["WALMART"],
-            RETAILERS["BODEGA_AURRERA"],
-            RETAILERS["CHEDRAUI"],
-            RETAILERS["SORIANA"],
-            RETAILERS["LA_COMER"]
-        ]
-        
-        for retailer_id, result in zip(retailer_ids, results):
-            if isinstance(result, Exception):
-                logger.error(f"Scraper for Retailer {retailer_id} failed: {result}")
-            elif result is not None:
-                logger.info(f"Found price {result} for Retailer {retailer_id}")
-                await persist_price(supabase, retailer_id, result)
-            else:
-                logger.warning(f"No price found for Retailer {retailer_id}")
+        for product in products:
+            logger.info(f"--- Processing Product: {product['product_name']} (EAN: {product['ean_code']}) ---")
+            
+            # Define tasks for this product
+            walmart_task = scrape_walmart(p, product)
+            bodega_task = scrape_bodega(p, product)
+            chedraui_task = scrape_chedraui(product)
+            soriana_task = scrape_soriana(product)
+            lacomer_task = scrape_lacomer(product)
+            
+            # Execute all scrapers for this product
+            results = await asyncio.gather(
+                walmart_task, 
+                bodega_task, 
+                chedraui_task, 
+                soriana_task, 
+                lacomer_task, 
+                return_exceptions=True
+            )
+            
+            # Process Results
+            retailer_ids = [
+                RETAILERS["WALMART"],
+                RETAILERS["BODEGA_AURRERA"],
+                RETAILERS["CHEDRAUI"],
+                RETAILERS["SORIANA"],
+                RETAILERS["LA_COMER"]
+            ]
+            
+            for retailer_id, result in zip(retailer_ids, results):
+                if isinstance(result, Exception):
+                    logger.error(f"Scraper for Retailer {retailer_id} failed: {result}")
+                elif result is not None:
+                    logger.info(f"Found price {result} for Retailer {retailer_id}")
+                    await persist_price(supabase, product, retailer_id, result)
+                else:
+                    logger.warning(f"No price found for Retailer {retailer_id}")
 
 if __name__ == "__main__":
     asyncio.run(main())

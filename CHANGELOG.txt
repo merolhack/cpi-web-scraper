@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.15] - 2025-11-29
+- Refactored `main.py` to fetch active products dynamically from Supabase `cpi_products` table.
+- Removed hardcoded product EAN and Name.
+- Scraper now iterates through all active products in the database.
+
 ## [0.1.14] - 2025-11-30
 - Fixed `httpx.AsyncClient` initialization to use `proxy` argument (compatible with httpx >= 0.28.0).
 - Fixed Playwright launch logic to handle cases where no proxy is available (skips `per-context` mode).
