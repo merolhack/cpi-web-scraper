@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.19] - 2025-11-29
+- Implemented On-Demand Scraping: `main.py` now accepts a `--product_id` argument to scrape a specific product immediately.
+- Updated GitHub Actions workflow to accept `product_id` input for manual or API-triggered runs.
+
 ## [0.1.18] - 2025-11-29
 - Integrated `proxy_harvester.py` into the main scraping workflow to ensure fresh proxies for every run.
 - Optimized Playwright scrapers (Walmart/Bodega) by blocking images, fonts, and media to reduce timeouts.

@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 */6 * * *' # Every 6 hours
   workflow_dispatch: # Manual trigger
+    inputs:
+      product_id:
+        description: 'Specific Product ID to scrape (Optional)'
+        required: false
+        type: string
 
 jobs:
   scrape:
@@ -41,4 +46,8 @@ jobs:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       run: |
-        python main.py
+        if [ -n "${{ inputs.product_id }}" ]; then
+          python main.py --product_id ${{ inputs.product_id }}
+        else
+          python main.py
+        fi

@@ -1,8 +1,8 @@
-import asyncio
-import json
 import os
-import random
+import asyncio
 import logging
+import argparse
+import json
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Set
 
@@ -463,74 +463,88 @@ async def scrape_lacomer(product: Dict[str, Any]) -> Optional[float]:
     return None
 
 
-# --- Main Orchestrator ---
+async def fetch_specific_product(client: Client, product_id: int) -> List[Dict[str, Any]]:
+    """
+    Fetches a single product by ID.
+    """
+    try:
+        response = client.table("cpi_products").select("*").eq("product_id", product_id).execute()
+        if response.data:
+            logger.info(f"Fetched specific product: {response.data[0]['product_name']}")
+            return response.data
+        else:
+            logger.warning(f"Product {product_id} not found.")
+            return []
+    except Exception as e:
+        logger.error(f"Failed to fetch product {product_id}: {e}")
+        return []
 
 async def main():
     logger.info("Starting Hybrid Scraper...")
     
-    supabase = get_supabase_client()
-    if not supabase:
-        logger.error("Aborting: Supabase client not initialized.")
+    # Parse Arguments
+    parser = argparse.ArgumentParser(description="CPI Web Scraper")
+    parser.add_argument("--product_id", type=int, help="Scrape a specific product ID only")
+    args = parser.parse_args()
+
+    client = get_supabase_client()
+    if not client:
         return
 
-    # 1. Fetch Products to Scrape (Batch Limit: 3)
-    # This RPC returns products that have < 5 prices for the current month.
-    products = await fetch_products_to_scrape(supabase, limit=3)
-    
-    if not products:
-        logger.info("No products found needing updates for this month (or limit reached).")
-        return
+    async with async_playwright() as playwright:
+        # Determine which products to scrape
+        if args.product_id:
+            logger.info(f"Mode: Single Product (ID: {args.product_id})")
+            products = await fetch_specific_product(client, args.product_id)
+        else:
+            logger.info("Mode: Batch Scraping")
+            products = await fetch_products_to_scrape(client, limit=3)
 
-    # 2. Iterate through products
-    async with async_playwright() as p:
+        if not products:
+            logger.info("No products to scrape.")
+            return
+
         for product in products:
-            logger.info(f"--- Processing Product: {product['product_name']} (EAN: {product['ean_code']}) ---")
+            product_id = product['product_id']
+            name = product['product_name']
+            ean = product['ean_code']
             
-            # Define tasks for this product, checking if price already exists
+            logger.info(f"--- Processing Product: {name} (EAN: {ean}) ---")
+            
+            # Scrape all retailers for this product
             tasks = []
-            retailer_ids = []
             
-            # Walmart
-            if not await check_existing_price(supabase, product['product_id'], RETAILERS["WALMART"]):
-                tasks.append(scrape_walmart(p, product))
-                retailer_ids.append(RETAILERS["WALMART"])
-            
-            # Bodega Aurrera
-            if not await check_existing_price(supabase, product['product_id'], RETAILERS["BODEGA_AURRERA"]):
-                tasks.append(scrape_bodega(p, product))
-                retailer_ids.append(RETAILERS["BODEGA_AURRERA"])
-                
-            # Chedraui
-            if not await check_existing_price(supabase, product['product_id'], RETAILERS["CHEDRAUI"]):
-                tasks.append(scrape_chedraui(product))
-                retailer_ids.append(RETAILERS["CHEDRAUI"])
-                
-            # Soriana
-            if not await check_existing_price(supabase, product['product_id'], RETAILERS["SORIANA"]):
-                tasks.append(scrape_soriana(product))
-                retailer_ids.append(RETAILERS["SORIANA"])
-                
-            # La Comer
-            if not await check_existing_price(supabase, product['product_id'], RETAILERS["LA_COMER"]):
-                tasks.append(scrape_lacomer(product))
-                retailer_ids.append(RETAILERS["LA_COMER"])
-            
-            if not tasks:
-                logger.info("All retailers already scraped for this product this month.")
-                continue
+            # 1. Walmart
+            if not await check_existing_price(client, product_id, RETAILERS["WALMART"]):
+                price = await scrape_walmart(playwright, product)
+                if price: await persist_price(client, product, RETAILERS["WALMART"], price)
+                else: logger.warning(f"No price found for Retailer {RETAILERS['WALMART']}")
 
-            # Execute all scrapers for this product
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Process Results
-            for retailer_id, result in zip(retailer_ids, results):
-                if isinstance(result, Exception):
-                    logger.error(f"Scraper for Retailer {retailer_id} failed: {result}")
-                elif result is not None:
-                    logger.info(f"Found price {result} for Retailer {retailer_id}")
-                    await persist_price(supabase, product, retailer_id, result)
-                else:
-                    logger.warning(f"No price found for Retailer {retailer_id}")
+            # 2. Bodega Aurrera
+            if not await check_existing_price(client, product_id, RETAILERS["BODEGA_AURRERA"]):
+                price = await scrape_bodega(playwright, product)
+                if price: await persist_price(client, product, RETAILERS["BODEGA_AURRERA"], price)
+                else: logger.warning(f"No price found for Retailer {RETAILERS['BODEGA_AURRERA']}")
+
+            # 3. Chedraui
+            if not await check_existing_price(client, product_id, RETAILERS["CHEDRAUI"]):
+                price = await scrape_chedraui(product)
+                if price: await persist_price(client, product, RETAILERS["CHEDRAUI"], price)
+                else: logger.warning(f"No price found for Retailer {RETAILERS['CHEDRAUI']}")
+
+            # 4. Soriana
+            if not await check_existing_price(client, product_id, RETAILERS["SORIANA"]):
+                price = await scrape_soriana(product)
+                if price: await persist_price(client, product, RETAILERS["SORIANA"], price)
+                else: logger.warning(f"No price found for Retailer {RETAILERS['SORIANA']}")
+
+            # 5. La Comer
+            if not await check_existing_price(client, product_id, RETAILERS["LA_COMER"]):
+                price = await scrape_lacomer(product)
+                if price: await persist_price(client, product, RETAILERS["LA_COMER"], price)
+                else: logger.warning(f"No price found for Retailer {RETAILERS['LA_COMER']}")
+
+    logger.info("Scraping Cycle Completed.")
 
 if __name__ == "__main__":
     asyncio.run(main())
