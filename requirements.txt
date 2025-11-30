@@ -3,3 +3,5 @@ supabase==2.24.0
 httpx
 beautifulsoup4==4.12.2
 python-dotenv==1.0.0
+geoip2
+aiohttp

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.11] - 2025-11-29
+- Added Robust Proxy System components (Supabase-backed).
+- Added `scripts/setup_proxies.sql` for database migration.
+- Added `scripts/proxy_harvester.py` for fetching and validating proxies.
+- Added `proxy_client.py` for rotating proxies via Supabase.
+
 ## [0.1.10] - 2025-11-29
 - Implemented robust Free Proxy Rotation System.
 - Added `ProxyManager` to fetch and rotate proxies from GitHub sources.
