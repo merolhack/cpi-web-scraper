@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.16] - 2025-11-29
+- Implemented "Once per Month" scraping logic to avoid redundant data collection.
+- Added batching to `main.py` (processes 3 products per run).
+- Added `url` column to `cpi_establishments` table.
+- Added `get_products_to_scrape` RPC for optimized product fetching.
+
 ## [0.1.15] - 2025-11-29
 - Refactored `main.py` to fetch active products dynamically from Supabase `cpi_products` table.
 - Removed hardcoded product EAN and Name.

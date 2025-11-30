@@ -55,22 +55,44 @@ def get_supabase_client() -> Optional[Client]:
 
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
-async def fetch_active_products(client: Client) -> List[Dict[str, Any]]:
+async def fetch_products_to_scrape(client: Client, limit: int = 3) -> List[Dict[str, Any]]:
     """
-    Fetches active products from the database.
+    Fetches a batch of products that need scraping for the current month.
+    Uses the RPC 'get_products_to_scrape'.
     """
     try:
-        response = client.table("cpi_products") \
-            .select("product_id, ean_code, product_name, country_id, category_id") \
-            .eq("is_active_product", True) \
-            .execute()
-        
+        response = client.rpc("get_products_to_scrape", {"p_limit": limit}).execute()
         products = response.data
-        logger.info(f"Fetched {len(products)} active products.")
+        logger.info(f"Fetched {len(products)} products to scrape (Limit: {limit}).")
         return products
     except Exception as e:
         logger.error(f"Failed to fetch products: {e}")
         return []
+
+async def check_existing_price(client: Client, product_id: int, retailer_id: int) -> bool:
+    """
+    Checks if a price exists for the given product and retailer in the current month.
+    """
+    try:
+        # Calculate start of current month
+        now = datetime.now()
+        start_of_month = datetime(now.year, now.month, 1).strftime("%Y-%m-%d")
+        
+        response = client.table("cpi_prices") \
+            .select("price_id") \
+            .eq("product_id", product_id) \
+            .eq("establishment_id", retailer_id) \
+            .gte("date", start_of_month) \
+            .limit(1) \
+            .execute()
+            
+        exists = len(response.data) > 0
+        if exists:
+            logger.info(f"Price already exists for Product {product_id} at Retailer {retailer_id} this month. Skipping.")
+        return exists
+    except Exception as e:
+        logger.error(f"Failed to check existing price: {e}")
+        return False # Assume false to retry if check fails, or True to be safe? False is better for data completeness.
 
 async def persist_price(client: Client, product: Dict[str, Any], retailer_id: int, price: float):
     """
@@ -408,10 +430,12 @@ async def main():
         logger.error("Aborting: Supabase client not initialized.")
         return
 
-    # 1. Fetch Active Products
-    products = await fetch_active_products(supabase)
+    # 1. Fetch Products to Scrape (Batch Limit: 3)
+    # This RPC returns products that have < 5 prices for the current month.
+    products = await fetch_products_to_scrape(supabase, limit=3)
+    
     if not products:
-        logger.warning("No active products found to scrape.")
+        logger.info("No products found needing updates for this month (or limit reached).")
         return
 
     # 2. Iterate through products
@@ -419,32 +443,43 @@ async def main():
         for product in products:
             logger.info(f"--- Processing Product: {product['product_name']} (EAN: {product['ean_code']}) ---")
             
-            # Define tasks for this product
-            walmart_task = scrape_walmart(p, product)
-            bodega_task = scrape_bodega(p, product)
-            chedraui_task = scrape_chedraui(product)
-            soriana_task = scrape_soriana(product)
-            lacomer_task = scrape_lacomer(product)
+            # Define tasks for this product, checking if price already exists
+            tasks = []
+            retailer_ids = []
             
+            # Walmart
+            if not await check_existing_price(supabase, product['product_id'], RETAILERS["WALMART"]):
+                tasks.append(scrape_walmart(p, product))
+                retailer_ids.append(RETAILERS["WALMART"])
+            
+            # Bodega Aurrera
+            if not await check_existing_price(supabase, product['product_id'], RETAILERS["BODEGA_AURRERA"]):
+                tasks.append(scrape_bodega(p, product))
+                retailer_ids.append(RETAILERS["BODEGA_AURRERA"])
+                
+            # Chedraui
+            if not await check_existing_price(supabase, product['product_id'], RETAILERS["CHEDRAUI"]):
+                tasks.append(scrape_chedraui(product))
+                retailer_ids.append(RETAILERS["CHEDRAUI"])
+                
+            # Soriana
+            if not await check_existing_price(supabase, product['product_id'], RETAILERS["SORIANA"]):
+                tasks.append(scrape_soriana(product))
+                retailer_ids.append(RETAILERS["SORIANA"])
+                
+            # La Comer
+            if not await check_existing_price(supabase, product['product_id'], RETAILERS["LA_COMER"]):
+                tasks.append(scrape_lacomer(product))
+                retailer_ids.append(RETAILERS["LA_COMER"])
+            
+            if not tasks:
+                logger.info("All retailers already scraped for this product this month.")
+                continue
+
             # Execute all scrapers for this product
-            results = await asyncio.gather(
-                walmart_task, 
-                bodega_task, 
-                chedraui_task, 
-                soriana_task, 
-                lacomer_task, 
-                return_exceptions=True
-            )
+            results = await asyncio.gather(*tasks, return_exceptions=True)
             
             # Process Results
-            retailer_ids = [
-                RETAILERS["WALMART"],
-                RETAILERS["BODEGA_AURRERA"],
-                RETAILERS["CHEDRAUI"],
-                RETAILERS["SORIANA"],
-                RETAILERS["LA_COMER"]
-            ]
-            
             for retailer_id, result in zip(retailer_ids, results):
                 if isinstance(result, Exception):
                     logger.error(f"Scraper for Retailer {retailer_id} failed: {result}")
