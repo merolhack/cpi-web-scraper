@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.20] - 2025-11-29
+- Refactored `main.py` to fetch retailer configuration dynamically from the `cpi_establishments` table.
+- Standardized scraper function signatures to `(playwright, product)`.
+- Implemented `SCRAPER_REGISTRY` to map database establishment names to scraper functions.
+
 ## [0.1.19] - 2025-11-29
 - Implemented On-Demand Scraping: `main.py` now accepts a `--product_id` argument to scrape a specific product immediately.
 - Updated GitHub Actions workflow to accept `product_id` input for manual or API-triggered runs.

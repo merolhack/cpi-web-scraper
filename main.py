@@ -22,20 +22,35 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+import os
+import asyncio
+import logging
+import argparse
+import json
+from datetime import datetime
+from typing import Optional, Dict, Any, List, Set
+
+import httpx
+from playwright.async_api import async_playwright, Page, Playwright, TimeoutError as PlaywrightTimeoutError
+from supabase import create_client, Client
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+
+from proxy_client import ProxyRotator
+
+# Load environment variables
+load_dotenv()
+
+# Configure Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 # --- Configuration ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-
-# Retailer Mapping (ID from DB)
-RETAILERS = {
-    "WALMART": 1,
-    "BODEGA_AURRERA": 2,
-    "CHEDRAUI": 3,
-    "SORIANA": 4,
-    "LA_COMER": 5
-}
 
 # Global Proxy Rotator Instance
 rotator = ProxyRotator()
@@ -54,6 +69,19 @@ def get_supabase_client() -> Optional[Client]:
         logger.warning("Could not parse Supabase Project ID.")
 
     return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+async def fetch_establishments(client: Client) -> List[Dict[str, Any]]:
+    """
+    Fetches all active establishments from the database.
+    """
+    try:
+        response = client.table("cpi_establishments").select("*").execute()
+        establishments = response.data
+        logger.info(f"Fetched {len(establishments)} establishments from DB.")
+        return establishments
+    except Exception as e:
+        logger.error(f"Failed to fetch establishments: {e}")
+        return []
 
 async def fetch_products_to_scrape(client: Client, limit: int = 3) -> List[Dict[str, Any]]:
     """
@@ -239,7 +267,7 @@ async def scrape_bodega(playwright: Playwright, product: Dict[str, Any]) -> Opti
             page = await context.new_page()
             
             # Optimize: Block images, fonts, media
-            await page.route("**/*", lambda route: route.abort() if route.request.resource_type in ["image", "media", "font", "stylesheet"] else route.continue_())
+            await context.route("**/*", lambda route: route.abort() if route.request.resource_type in ["image", "media", "font", "stylesheet"] else route.continue_())
             
             url = f"https://www.bodegaaurrera.com.mx/productos?Ntt={ean}"
             await page.goto(url, timeout=30000)
@@ -270,7 +298,7 @@ async def scrape_bodega(playwright: Playwright, product: Dict[str, Any]) -> Opti
 
 # --- Soft Target Scrapers (HTTPX) ---
 
-async def scrape_chedraui(product: Dict[str, Any]) -> Optional[float]:
+async def scrape_chedraui(playwright: Playwright, product: Dict[str, Any]) -> Optional[float]:
     """
     Simulates VTEX Search API call for Chedraui with Proxy Rotation.
     """
@@ -330,7 +358,7 @@ async def scrape_chedraui(product: Dict[str, Any]) -> Optional[float]:
             
     return None
 
-async def scrape_soriana(product: Dict[str, Any]) -> Optional[float]:
+async def scrape_soriana(playwright: Playwright, product: Dict[str, Any]) -> Optional[float]:
     """
     Simulates Salesforce Commerce Cloud search for Soriana with Proxy Rotation.
     """
@@ -405,7 +433,7 @@ async def scrape_soriana(product: Dict[str, Any]) -> Optional[float]:
             
     return None
 
-async def scrape_lacomer(product: Dict[str, Any]) -> Optional[float]:
+async def scrape_lacomer(playwright: Playwright, product: Dict[str, Any]) -> Optional[float]:
     """
     Simulates La Comer internal API with Proxy Rotation.
     """
@@ -479,6 +507,16 @@ async def fetch_specific_product(client: Client, product_id: int) -> List[Dict[s
         logger.error(f"Failed to fetch product {product_id}: {e}")
         return []
 
+# --- Scraper Registry ---
+# Maps establishment names (from DB) to scraper functions.
+SCRAPER_REGISTRY = {
+    "Walmart": scrape_walmart,
+    "Bodega Aurrera": scrape_bodega,
+    "Chedraui": scrape_chedraui,
+    "Soriana": scrape_soriana,
+    "La Comer": scrape_lacomer
+}
+
 async def main():
     logger.info("Starting Hybrid Scraper...")
     
@@ -489,6 +527,12 @@ async def main():
 
     client = get_supabase_client()
     if not client:
+        return
+
+    # Fetch Establishments
+    establishments = await fetch_establishments(client)
+    if not establishments:
+        logger.error("No establishments found in DB. Exiting.")
         return
 
     async with async_playwright() as playwright:
@@ -512,37 +556,30 @@ async def main():
             logger.info(f"--- Processing Product: {name} (EAN: {ean}) ---")
             
             # Scrape all retailers for this product
-            tasks = []
-            
-            # 1. Walmart
-            if not await check_existing_price(client, product_id, RETAILERS["WALMART"]):
-                price = await scrape_walmart(playwright, product)
-                if price: await persist_price(client, product, RETAILERS["WALMART"], price)
-                else: logger.warning(f"No price found for Retailer {RETAILERS['WALMART']}")
-
-            # 2. Bodega Aurrera
-            if not await check_existing_price(client, product_id, RETAILERS["BODEGA_AURRERA"]):
-                price = await scrape_bodega(playwright, product)
-                if price: await persist_price(client, product, RETAILERS["BODEGA_AURRERA"], price)
-                else: logger.warning(f"No price found for Retailer {RETAILERS['BODEGA_AURRERA']}")
-
-            # 3. Chedraui
-            if not await check_existing_price(client, product_id, RETAILERS["CHEDRAUI"]):
-                price = await scrape_chedraui(product)
-                if price: await persist_price(client, product, RETAILERS["CHEDRAUI"], price)
-                else: logger.warning(f"No price found for Retailer {RETAILERS['CHEDRAUI']}")
-
-            # 4. Soriana
-            if not await check_existing_price(client, product_id, RETAILERS["SORIANA"]):
-                price = await scrape_soriana(product)
-                if price: await persist_price(client, product, RETAILERS["SORIANA"], price)
-                else: logger.warning(f"No price found for Retailer {RETAILERS['SORIANA']}")
-
-            # 5. La Comer
-            if not await check_existing_price(client, product_id, RETAILERS["LA_COMER"]):
-                price = await scrape_lacomer(product)
-                if price: await persist_price(client, product, RETAILERS["LA_COMER"], price)
-                else: logger.warning(f"No price found for Retailer {RETAILERS['LA_COMER']}")
+            for establishment in establishments:
+                est_id = establishment['establishment_id']
+                est_name = establishment['establishment_name']
+                
+                # Get the scraper function
+                scraper_func = SCRAPER_REGISTRY.get(est_name)
+                
+                if not scraper_func:
+                    logger.debug(f"No scraper implemented for {est_name}. Skipping.")
+                    continue
+                
+                # Check if price exists
+                if await check_existing_price(client, product_id, est_id):
+                    continue
+                
+                # Execute scraper
+                try:
+                    price = await scraper_func(playwright, product)
+                    if price:
+                        await persist_price(client, product, est_id, price)
+                    else:
+                        logger.warning(f"No price found for {est_name}")
+                except Exception as e:
+                    logger.error(f"Error scraping {est_name}: {e}")
 
     logger.info("Scraping Cycle Completed.")
 
