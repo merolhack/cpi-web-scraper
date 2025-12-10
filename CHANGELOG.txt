@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.21] - 2025-12-10
+- Added `--all` flag to scrape ALL products in the database (no limit).
+- Changed GitHub Actions schedule from every 6 hours to every 4 hours.
+- Default scheduled runs now use `--all` flag to process all products.
+- Fixed duplicate imports in `main.py`.
+
 ## [0.1.20] - 2025-11-29
 - Refactored `main.py` to fetch retailer configuration dynamically from the `cpi_establishments` table.
 - Standardized scraper function signatures to `(playwright, product)`.

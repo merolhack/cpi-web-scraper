@@ -22,30 +22,6 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
-import os
-import asyncio
-import logging
-import argparse
-import json
-from datetime import datetime
-from typing import Optional, Dict, Any, List, Set
-
-import httpx
-from playwright.async_api import async_playwright, Page, Playwright, TimeoutError as PlaywrightTimeoutError
-from supabase import create_client, Client
-from bs4 import BeautifulSoup
-from dotenv import load_dotenv
-
-from proxy_client import ProxyRotator
-
-# Load environment variables
-load_dotenv()
-
-# Configure Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 # --- Configuration ---
@@ -523,6 +499,7 @@ async def main():
     # Parse Arguments
     parser = argparse.ArgumentParser(description="CPI Web Scraper")
     parser.add_argument("--product_id", type=int, help="Scrape a specific product ID only")
+    parser.add_argument("--all", action="store_true", help="Scrape ALL products in the database (no limit)")
     args = parser.parse_args()
 
     client = get_supabase_client()
@@ -540,8 +517,11 @@ async def main():
         if args.product_id:
             logger.info(f"Mode: Single Product (ID: {args.product_id})")
             products = await fetch_specific_product(client, args.product_id)
+        elif args.all:
+            logger.info("Mode: ALL Products (no limit)")
+            products = await fetch_products_to_scrape(client, limit=9999)
         else:
-            logger.info("Mode: Batch Scraping")
+            logger.info("Mode: Batch Scraping (limit 3)")
             products = await fetch_products_to_scrape(client, limit=3)
 
         if not products:

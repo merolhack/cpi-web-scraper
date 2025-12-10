@@ -2,7 +2,7 @@ name: Hybrid Scraper
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Every 6 hours
+    - cron: '0 */4 * * *' # Every 4 hours
   workflow_dispatch: # Manual trigger
     inputs:
       product_id:
@@ -49,5 +49,6 @@ jobs:
         if [ -n "${{ inputs.product_id }}" ]; then
           python main.py --product_id ${{ inputs.product_id }}
         else
-          python main.py
+          python main.py --all
         fi
+
