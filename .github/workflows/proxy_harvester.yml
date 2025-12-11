@@ -8,6 +8,7 @@ on:
 jobs:
   harvest-proxies:
     runs-on: ubuntu-22.04
+    environment: 'Python script'
     
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
