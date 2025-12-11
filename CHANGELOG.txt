@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.23] - 2025-12-11
+- Expanded proxy harvester to include North and Central American countries (US, MX, GT, SV, HN, CR, NI, PA, BZ) instead of Mexico only.
+- This significantly increases the available proxy pool for web scraping.
+- Proxies are now stored with their actual country code instead of hardcoded "MX".
+
 ## [0.1.22] - 2025-12-11
 - Fixed `proxy_harvester.yml` workflow by adding `environment: 'Python script'` to enable access to Supabase secrets.
 - This resolves the "Supabase credentials missing" error that was causing the standalone Proxy Harvester workflow to fail.

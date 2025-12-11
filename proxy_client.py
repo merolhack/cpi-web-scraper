@@ -20,7 +20,7 @@ class ProxyRotator:
 
     def get_proxy(self) -> Optional[Dict[str, Any]]:
         """
-        Fetches the best available MX proxy from Supabase.
+        Fetches the best available proxy from Supabase (Americas region).
         Returns dict with 'proxy_id', 'ip_address', 'port', 'protocol', 'url'.
         """
         if not self.client:
@@ -37,7 +37,7 @@ class ProxyRotator:
                 proxy_data['url'] = f"{protocol}://{ip}:{port}"
                 return proxy_data
             else:
-                logger.warning("No active MX proxies available in DB.")
+                logger.warning("No active proxies available in DB.")
                 return None
         except Exception as e:
             logger.error(f"Failed to get proxy from DB: {e}")

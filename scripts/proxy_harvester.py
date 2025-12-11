@@ -25,6 +25,9 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 GEOIP_DB_PATH = "GeoLite2-Country.mmdb"
 GEOIP_DB_URL = "https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-Country.mmdb"
 
+# Americas country codes - US and Central America
+AMERICAS_COUNTRY_CODES = ['MX', 'US', 'GT', 'SV', 'HN', 'CR', 'NI', 'PA', 'BZ']
+
 PROXY_SOURCES = [
     "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
     "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
@@ -55,12 +58,16 @@ async def download_geoip_db():
             else:
                 logger.error(f"Failed to download GeoIP DB: {response.status_code}")
 
-def is_mx_proxy(ip: str, reader: geoip2.database.Reader) -> bool:
+def is_americas_proxy(ip: str, reader: geoip2.database.Reader) -> tuple[bool, str]:
+    """Check if IP is from Americas (US/Central America). Returns (is_valid, country_code)."""
     try:
         response = reader.country(ip)
-        return response.country.iso_code == 'MX'
+        country_code = response.country.iso_code
+        if country_code in AMERICAS_COUNTRY_CODES:
+            return True, country_code
+        return False, ''
     except Exception:
-        return False
+        return False, ''
 
 async def fetch_proxies(client: httpx.AsyncClient, url: str) -> List[str]:
     try:
@@ -111,43 +118,49 @@ async def main():
     
     logger.info(f"Found {len(raw_proxies)} raw proxies.")
 
-    # 2. Filter MX
-    mx_proxies = []
+    # 2. Filter Americas (US + Central America)
+    americas_proxies = []  # List of (proxy_string, country_code)
     for p in raw_proxies:
         try:
             ip = p.split(":")[0]
-            if is_mx_proxy(ip, reader):
-                mx_proxies.append(p)
+            is_valid, country_code = is_americas_proxy(ip, reader)
+            if is_valid:
+                americas_proxies.append((p, country_code))
         except Exception:
             continue
             
-    logger.info(f"Filtered {len(mx_proxies)} MX proxies.")
+    logger.info(f"Filtered {len(americas_proxies)} Americas proxies.")
     
-    if not mx_proxies:
-        logger.warning("No MX proxies found.")
+    if not americas_proxies:
+        logger.warning("No Americas proxies found.")
         return
 
     # 3. Validate
-    logger.info("Validating MX proxies...")
+    logger.info("Validating Americas proxies...")
     valid_proxies = []
+    
+    # Create a mapping from proxy string to country code for lookup after validation
+    proxy_country_map = {p: cc for p, cc in americas_proxies}
+    
     async with aiohttp.ClientSession() as session:
-        tasks = [validate_proxy(session, p) for p in mx_proxies]
+        tasks = [validate_proxy(session, p) for p, _ in americas_proxies]
         results = await asyncio.gather(*tasks)
         
         for proxy, status, latency in results:
             if status == 'active':
+                country_code = proxy_country_map.get(proxy, 'US')  # Default to US if not found
                 valid_proxies.append({
                     "ip_address": proxy.split(":")[0],
                     "port": int(proxy.split(":")[1]),
                     "protocol": "http",
-                    "country_code": "MX",
+                    "country_code": country_code,
                     "status": "active",
                     "latency_ms": latency,
                     "fail_count": 0,
                     "last_checked": datetime.now().isoformat()
                 })
 
-    logger.info(f"Found {len(valid_proxies)} active MX proxies.")
+    logger.info(f"Found {len(valid_proxies)} active Americas proxies.")
 
     # 4. Upsert to Supabase
     if valid_proxies:
