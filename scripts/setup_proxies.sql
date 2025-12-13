@@ -1,5 +1,5 @@
 -- Create table for proxies
-create table public.cpi_proxies (
+create table if not exists public.cpi_proxies (
   proxy_id bigint generated always as identity not null,
   ip_address inet not null,
   port integer not null,
@@ -18,7 +18,7 @@ create table public.cpi_proxies (
 );
 
 -- Partial index for fast retrieval of active MX proxies
-create index idx_cpi_proxies_active_mx 
+create index if not exists idx_cpi_proxies_active_mx 
   on public.cpi_proxies (latency_ms asc, fail_count asc) 
   where status = 'active' and country_code = 'MX';
 
