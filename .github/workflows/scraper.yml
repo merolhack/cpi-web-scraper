@@ -13,6 +13,7 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-22.04 # Pinned to 22.04 to support Playwright 1.40 dependencies
+    timeout-minutes: 300 # 5 hours max (safety margin under 6hr GitHub limit)
     environment: 'Python script'
     
     steps:
