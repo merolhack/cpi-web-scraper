@@ -115,7 +115,8 @@ async def persist_price(client: Client, product: Dict[str, Any], retailer_id: in
         "p_establishment_id": retailer_id,
         "p_country_id": product['country_id'] or 1, # Default to 1 if null
         "p_location_id": 1,
-        "p_category_id": product['category_id'] or 1 # Default to 1 if null
+        "p_category_id": product['category_id'] or 1, # Default to 1 if null
+        "p_user_id": os.getenv("SCRAPER_USER_ID", "c84569d4-83da-4ee3-8058-8fa0ca3dca11") # Web Scraper ID
     }
 
     try:
