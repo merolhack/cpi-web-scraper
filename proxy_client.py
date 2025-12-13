@@ -28,7 +28,7 @@ class ProxyRotator:
 
         try:
             # Direct query to bypass RPC country restriction - get any active proxy
-            response = self.client.table("proxies") \
+            response = self.client.table("cpi_proxies") \
                 .select("*") \
                 .eq("status", "active") \
                 .order("last_checked", desc=True) \

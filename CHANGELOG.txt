@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.27] - 2025-12-13
+- Fixed critical bug in `proxy_client.py` where it was querying non-existent table "proxies" instead of "cpi_proxies".
+- Addressed `PGRST205` error in GitHub Actions by identifying missing database table `cpi_proxies`.
+
 ## [0.1.26] - 2025-12-12
 - Increased scraper frequency to hourly (was every 4 hours).
 - Scraper now runs with `--all` flag by default to process all products every hour.
