@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.29] - 2025-12-13
+- **Improved proxy harvesting**: Added South American countries (CO, EC, PE, VE) to proxy filter.
+- **Optimized API scrapers** (Chedraui, Soriana, La Comer): Now try direct requests first, use proxies as fallback.
+- **Added direct fallback** for Playwright scrapers (Walmart, Bodega Aurrera): Try 5 proxies, then 1 direct attempt.
+- **Increased reliability**: Each scraper now has a two-phase approach for better success rates.
+
 ## [0.1.28] - 2025-12-13
 - Fixed `KeyError: 'id'` in `proxy_client.py` by correcting the column name reference to `proxy_id`.
 - This resolves the issue where valid proxies were failing to be used by the scraper.

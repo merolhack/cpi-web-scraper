@@ -25,8 +25,8 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 GEOIP_DB_PATH = "GeoLite2-Country.mmdb"
 GEOIP_DB_URL = "https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-Country.mmdb"
 
-# Americas country codes - US and Central America
-AMERICAS_COUNTRY_CODES = ['MX', 'US', 'GT', 'SV', 'HN', 'CR', 'NI', 'PA', 'BZ']
+# Americas country codes - North, Central, and Northern South America
+AMERICAS_COUNTRY_CODES = ['MX', 'US', 'GT', 'SV', 'HN', 'CR', 'NI', 'PA', 'BZ', 'CO', 'EC', 'PE', 'VE']
 
 PROXY_SOURCES = [
     "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",

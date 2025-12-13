@@ -128,19 +128,15 @@ async def persist_price(client: Client, product: Dict[str, Any], retailer_id: in
 
 async def scrape_walmart(playwright, product: Dict[str, Any]) -> Optional[float]:
     """
-    Scrapes Walmart Mexico using Trust Propagation via Google with Proxy Rotation.
+    Scrapes Walmart Mexico using Trust Propagation via Google.
+    Strategy: Try 5 proxies, then 1 direct attempt as fallback.
     """
-    price = None
-    retries = 5
     ean = product['ean_code']
     name = product['product_name']
     
-    for attempt in range(retries):
-        proxy_data = rotator.get_proxy()
-        proxy_url = proxy_data['url'] if proxy_data else None
-        proxy_id = proxy_data['proxy_id'] if proxy_data else None
-        
-        logger.info(f"[Walmart] Attempt {attempt+1}/{retries} for {name} using proxy: {proxy_url}")
+    async def try_scrape(proxy_url: Optional[str] = None, proxy_id: Optional[int] = None) -> Optional[float]:
+        attempt_type = "proxy" if proxy_url else "direct"
+        logger.info(f"[Walmart] Trying {attempt_type} for {name[:50]}...")
         
         launch_args = {"headless": True, "args": ["--no-sandbox"]}
         if proxy_url:
@@ -201,41 +197,53 @@ async def scrape_walmart(playwright, product: Dict[str, Any]) -> Optional[float]
                     price = float(price_info.get('price', 0)) or float(price_info.get('leadPrice', 0))
                     if price:
                         if proxy_id: rotator.report_success(proxy_id)
-                        return price # Success
+                        logger.info(f"[Walmart] SUCCESS ({attempt_type}): ${price}")
+                        return price
                 except KeyError:
                     logger.warning("[Walmart] JSON structure mismatch.")
                     
         except (PlaywrightTimeoutError, Exception) as e:
-            logger.warning(f"[Walmart] Attempt {attempt+1} failed: {e}")
+            logger.warning(f"[Walmart] {attempt_type} failed: {e}")
             if proxy_id: rotator.report_failure(proxy_id)
         finally:
             if context:
                 await context.close()
             await browser.close()
+        return None
+    
+    # Phase 1: Try with proxies (5 attempts)
+    for attempt in range(5):
+        proxy_data = rotator.get_proxy()
+        if proxy_data:
+            result = await try_scrape(proxy_data['url'], proxy_data['proxy_id'])
+            if result:
+                return result
+    
+    # Phase 2: Final direct attempt (no proxy)
+    result = await try_scrape()
+    if result:
+        return result
             
     return None
 
 async def scrape_bodega(playwright: Playwright, product: Dict[str, Any]) -> Optional[float]:
     """
-    Scrapes Bodega Aurrera using Playwright with Proxy Rotation.
+    Scrapes Bodega Aurrera using Playwright.
+    Strategy: Try 5 proxies, then 1 direct attempt as fallback.
     """
-    price = None
-    retries = 5
     ean = product['ean_code']
     name = product['product_name']
     
-    for attempt in range(retries):
-        proxy_data = rotator.get_proxy()
-        proxy_server = proxy_data['url'] if proxy_data else None
-        proxy_id = proxy_data['proxy_id'] if proxy_data else None
-        
-        logger.info(f"[Bodega] Attempt {attempt+1}/{retries} for {name} using proxy: {proxy_server}")
+    async def try_scrape(proxy_url: Optional[str] = None, proxy_id: Optional[int] = None) -> Optional[float]:
+        attempt_type = "proxy" if proxy_url else "direct"
+        logger.info(f"[Bodega] Trying {attempt_type} for {name[:50]}...")
 
         browser = None
+        context = None
         try:
             browser = await playwright.chromium.launch(
                 headless=True,
-                proxy={"server": proxy_server} if proxy_server else None
+                proxy={"server": proxy_url} if proxy_url else None
             )
             
             context = await browser.new_context(
@@ -261,15 +269,31 @@ async def scrape_bodega(playwright: Playwright, product: Dict[str, Any]) -> Opti
                 price = float(price_info.get('price', 0)) or float(price_info.get('leadPrice', 0))
                 if price:
                     if proxy_id: rotator.report_success(proxy_id)
-                    return price # Success
+                    logger.info(f"[Bodega] SUCCESS ({attempt_type}): ${price}")
+                    return price
 
         except (PlaywrightTimeoutError, Exception) as e:
-            logger.warning(f"[Bodega] Attempt {attempt+1} failed: {e}")
+            logger.warning(f"[Bodega] {attempt_type} failed: {e}")
             if proxy_id: rotator.report_failure(proxy_id)
         finally:
             if context:
                 await context.close()
-            await browser.close()
+            if browser:
+                await browser.close()
+        return None
+    
+    # Phase 1: Try with proxies (5 attempts)
+    for attempt in range(5):
+        proxy_data = rotator.get_proxy()
+        if proxy_data:
+            result = await try_scrape(proxy_data['url'], proxy_data['proxy_id'])
+            if result:
+                return result
+    
+    # Phase 2: Final direct attempt (no proxy)
+    result = await try_scrape()
+    if result:
+        return result
             
     return None
 
@@ -278,29 +302,25 @@ async def scrape_bodega(playwright: Playwright, product: Dict[str, Any]) -> Opti
 
 async def scrape_chedraui(playwright: Playwright, product: Dict[str, Any]) -> Optional[float]:
     """
-    Simulates VTEX Search API call for Chedraui with Proxy Rotation.
+    Scrapes Chedraui using VTEX API.
+    Strategy: Try direct first, then proxy fallback.
     """
-    price = None
-    retries = 5
     ean = product['ean_code']
     name = product['product_name']
     
-    for attempt in range(retries):
-        proxy_data = rotator.get_proxy()
-        proxy_url = proxy_data['url'] if proxy_data else None
-        proxy_id = proxy_data['proxy_id'] if proxy_data else None
-        
-        logger.info(f"[Chedraui] Attempt {attempt+1}/{retries} for {name} using proxy: {proxy_url}")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
+    
+    async def try_fetch(proxy_url: Optional[str] = None, proxy_id: Optional[int] = None) -> Optional[float]:
+        attempt_type = "proxy" if proxy_url else "direct"
+        logger.info(f"[Chedraui] Trying {attempt_type} for {name[:50]}...")
         
         try:
-            async with httpx.AsyncClient(proxy=proxy_url, timeout=10) as client:
+            async with httpx.AsyncClient(proxy=proxy_url, timeout=15, verify=False) as client:
                 # Try EAN first
                 url = f"https://www.chedraui.com.mx/api/catalog_system/pub/products/search?ft={ean}"
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept": "application/json"
-                }
-                
                 response = await client.get(url, headers=headers)
                 
                 if response.status_code == 200:
@@ -309,163 +329,167 @@ async def scrape_chedraui(playwright: Playwright, product: Dict[str, Any]) -> Op
                         item = data[0]
                         price = item['items'][0]['sellers'][0]['commertialOffer']['Price']
                         if proxy_id: rotator.report_success(proxy_id)
+                        logger.info(f"[Chedraui] SUCCESS ({attempt_type}): ${price}")
                         return float(price)
                     else:
                         # Fallback to Name Search
-                        logger.info(f"[Chedraui] EAN not found, trying name search for '{name}'")
                         url_name = f"https://www.chedraui.com.mx/api/catalog_system/pub/products/search?ft={name}"
                         response_name = await client.get(url_name, headers=headers)
                         if response_name.status_code == 200:
                             data_name = response_name.json()
                             if data_name and len(data_name) > 0:
-                                # Simple heuristic: pick first result
                                 item = data_name[0]
                                 price = item['items'][0]['sellers'][0]['commertialOffer']['Price']
                                 if proxy_id: rotator.report_success(proxy_id)
+                                logger.info(f"[Chedraui] SUCCESS ({attempt_type}): ${price}")
                                 return float(price)
-
                 elif response.status_code in [403, 502, 503]:
-                    logger.warning(f"[Chedraui] Blocked/Error {response.status_code}")
                     if proxy_id: rotator.report_failure(proxy_id)
-                else:
-                    logger.warning(f"[Chedraui] API returned {response.status_code}")
-                    
-        except (httpx.ConnectError, httpx.TimeoutException, Exception) as e:
-            logger.warning(f"[Chedraui] Attempt {attempt+1} failed: {e}")
+        except Exception as e:
+            logger.warning(f"[Chedraui] {attempt_type} failed: {e}")
             if proxy_id: rotator.report_failure(proxy_id)
-            
+        return None
+    
+    # Phase 1: Try direct request first
+    result = await try_fetch()
+    if result:
+        return result
+    
+    # Phase 2: Try with proxies (5 attempts)
+    for attempt in range(5):
+        proxy_data = rotator.get_proxy()
+        if proxy_data:
+            result = await try_fetch(proxy_data['url'], proxy_data['proxy_id'])
+            if result:
+                return result
+    
     return None
 
 async def scrape_soriana(playwright: Playwright, product: Dict[str, Any]) -> Optional[float]:
     """
-    Simulates Salesforce Commerce Cloud search for Soriana with Proxy Rotation.
+    Scrapes Soriana using HTML search.
+    Strategy: Try direct first, then proxy fallback.
     """
-    price = None
-    retries = 5
     ean = product['ean_code']
     name = product['product_name']
     
-    for attempt in range(retries):
-        proxy_data = rotator.get_proxy()
-        proxy_url = proxy_data['url'] if proxy_data else None
-        proxy_id = proxy_data['proxy_id'] if proxy_data else None
-        
-        logger.info(f"[Soriana] Attempt {attempt+1}/{retries} for {name} using proxy: {proxy_url}")
+    url = "https://www.soriana.com/on/demandware.store/Sites-Soriana-Site/es_MX/Search-ShowAjax"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html"
+    }
+    
+    async def try_fetch(proxy_url: Optional[str] = None, proxy_id: Optional[int] = None) -> Optional[float]:
+        attempt_type = "proxy" if proxy_url else "direct"
+        logger.info(f"[Soriana] Trying {attempt_type} for {name[:50]}...")
         
         try:
-            async with httpx.AsyncClient(proxy=proxy_url, timeout=10) as client:
-                url = "https://www.soriana.com/on/demandware.store/Sites-Soriana-Site/es_MX/Search-ShowAjax"
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept": "application/json, text/html"
-                }
-                
+            async with httpx.AsyncClient(proxy=proxy_url, timeout=15, verify=False) as client:
                 # Try EAN first
                 params = {"q": ean, "lang": "es_MX"}
                 response = await client.get(url, params=params, headers=headers)
                 
                 if response.status_code == 200:
-                    found = False
-                    try:
-                        data = response.json()
-                        if 'productSearch' in data and 'productIds' in data['productSearch'] and data['productSearch']['productIds']:
-                            # Need to fetch product details if IDs found, but let's assume we need to parse HTML if JSON is partial
-                            # Actually Soriana JSON usually returns IDs, then we need another call? 
-                            # Or sometimes it returns HTML in 'grid' field?
-                            pass 
-                    except json.JSONDecodeError:
-                        # HTML Fallback
-                        soup = BeautifulSoup(response.text, 'html.parser')
-                        if soup.select_one(".price .sales .value"):
-                            price_element = soup.select_one(".price .sales .value")
-                            price_text = price_element.get_text(strip=True).replace("$", "").replace(",", "")
-                            if proxy_id: rotator.report_success(proxy_id)
-                            return float(price_text)
-                        
-                    # Fallback to Name Search if EAN failed
-                    logger.info(f"[Soriana] EAN not found, trying name search for '{name}'")
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    price_element = soup.select_one(".price .sales .value") or \
+                                    soup.select_one(".product-tile .price .value") or \
+                                    soup.select_one("[data-price]")
+                    
+                    if price_element:
+                        price_text = price_element.get_text(strip=True).replace("$", "").replace(",", "")
+                        if proxy_id: rotator.report_success(proxy_id)
+                        logger.info(f"[Soriana] SUCCESS ({attempt_type}): ${price_text}")
+                        return float(price_text)
+                    
+                    # Fallback to Name Search
                     params_name = {"q": name, "lang": "es_MX"}
                     response_name = await client.get(url, params=params_name, headers=headers)
                     
                     if response_name.status_code == 200:
-                         soup = BeautifulSoup(response_name.text, 'html.parser')
-                         # Try multiple selectors for price in search results
-                         price_element = soup.select_one(".price .sales .value") or \
-                                         soup.select_one(".product-tile .price .value") or \
-                                         soup.select_one(".product-price")
-                                         
-                         if price_element:
-                             price_text = price_element.get_text(strip=True).replace("$", "").replace(",", "")
-                             if proxy_id: rotator.report_success(proxy_id)
-                             return float(price_text)
-                         else:
-                             logger.warning(f"[Soriana] Price element not found in search results for '{name}'")
-
+                        soup = BeautifulSoup(response_name.text, 'html.parser')
+                        price_element = soup.select_one(".price .sales .value") or \
+                                        soup.select_one(".product-tile .price .value")
+                        if price_element:
+                            price_text = price_element.get_text(strip=True).replace("$", "").replace(",", "")
+                            if proxy_id: rotator.report_success(proxy_id)
+                            logger.info(f"[Soriana] SUCCESS ({attempt_type}): ${price_text}")
+                            return float(price_text)
+                            
                 elif response.status_code in [403, 502, 503]:
-                    logger.warning(f"[Soriana] Blocked/Error {response.status_code}")
                     if proxy_id: rotator.report_failure(proxy_id)
-                    
-        except (httpx.ConnectError, httpx.TimeoutException, Exception) as e:
-            logger.warning(f"[Soriana] Attempt {attempt+1} failed: {e}")
+        except Exception as e:
+            logger.warning(f"[Soriana] {attempt_type} failed: {e}")
             if proxy_id: rotator.report_failure(proxy_id)
-            
+        return None
+    
+    # Phase 1: Try direct request first
+    result = await try_fetch()
+    if result:
+        return result
+    
+    # Phase 2: Try with proxies (5 attempts)
+    for attempt in range(5):
+        proxy_data = rotator.get_proxy()
+        if proxy_data:
+            result = await try_fetch(proxy_data['url'], proxy_data['proxy_id'])
+            if result:
+                return result
+    
     return None
 
 async def scrape_lacomer(playwright: Playwright, product: Dict[str, Any]) -> Optional[float]:
     """
-    Simulates La Comer internal API with Proxy Rotation.
+    Scrapes La Comer using internal API.
+    Strategy: Try direct first, then proxy fallback.
     """
-    price = None
-    retries = 5
     ean = product['ean_code']
+    name = product['product_name']
     
-    for attempt in range(retries):
-        proxy_data = rotator.get_proxy()
-        proxy_url = proxy_data['url'] if proxy_data else None
-        proxy_id = proxy_data['proxy_id'] if proxy_data else None
-        
-        logger.info(f"[La Comer] Attempt {attempt+1}/{retries} for {ean} using proxy: {proxy_url}")
+    url = "https://www.lacomer.com.mx/lacomer-api/api/v1/public/articulopasillo/detalleArticulo"
+    params = {"artEan": ean, "noPagina": "1", "succId": "287"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://www.lacomer.com.mx/",
+        "Origin": "https://www.lacomer.com.mx"
+    }
+    
+    async def try_fetch(proxy_url: Optional[str] = None, proxy_id: Optional[int] = None) -> Optional[float]:
+        attempt_type = "proxy" if proxy_url else "direct"
+        logger.info(f"[La Comer] Trying {attempt_type} for {name[:50]}...")
         
         try:
-            async with httpx.AsyncClient(proxy=proxy_url, timeout=15) as client:
-                url = "https://www.lacomer.com.mx/lacomer-api/api/v1/public/articulopasillo/detalleArticulo"
-                params = {
-                    "artEan": ean,
-                    "noPagina": "1",
-                    "succId": "287"
-                }
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept": "application/json, text/plain, */*",
-                    "Accept-Language": "es-MX,es;q=0.9,en-US;q=0.8,en;q=0.7",
-                    "Referer": "https://www.lacomer.com.mx/",
-                    "Origin": "https://www.lacomer.com.mx",
-                    "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-                    "Sec-Ch-Ua-Mobile": "?0",
-                    "Sec-Ch-Ua-Platform": '"Windows"',
-                    "Sec-Fetch-Dest": "empty",
-                    "Sec-Fetch-Mode": "cors",
-                    "Sec-Fetch-Site": "same-origin",
-                    "Connection": "keep-alive"
-                }
-                
+            async with httpx.AsyncClient(proxy=proxy_url, timeout=15, verify=False) as client:
                 response = await client.get(url, params=params, headers=headers)
                 
                 if response.status_code == 200:
                     data = response.json()
                     if 'estrucArti' in data and data['estrucArti']:
-                        if proxy_id: rotator.report_success(proxy_id)
-                        return float(data['estrucArti'].get('artPrven', 0))
+                        price = float(data['estrucArti'].get('artPrven', 0))
+                        if price > 0:
+                            if proxy_id: rotator.report_success(proxy_id)
+                            logger.info(f"[La Comer] SUCCESS ({attempt_type}): ${price}")
+                            return price
                 elif response.status_code in [403, 502, 503]:
-                    logger.warning(f"[La Comer] Blocked/Error {response.status_code}")
                     if proxy_id: rotator.report_failure(proxy_id)
-                else:
-                    logger.warning(f"[La Comer] API returned {response.status_code}")
-
-        except (httpx.ConnectError, httpx.TimeoutException, Exception) as e:
-            logger.warning(f"[La Comer] Attempt {attempt+1} failed: {e}")
+        except Exception as e:
+            logger.warning(f"[La Comer] {attempt_type} failed: {e}")
             if proxy_id: rotator.report_failure(proxy_id)
-            
+        return None
+    
+    # Phase 1: Try direct request first
+    result = await try_fetch()
+    if result:
+        return result
+    
+    # Phase 2: Try with proxies (5 attempts)
+    for attempt in range(5):
+        proxy_data = rotator.get_proxy()
+        if proxy_data:
+            result = await try_fetch(proxy_data['url'], proxy_data['proxy_id'])
+            if result:
+                return result
+    
     return None
 
 
