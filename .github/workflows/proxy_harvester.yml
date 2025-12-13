@@ -8,6 +8,7 @@ on:
 jobs:
   harvest-proxies:
     runs-on: ubuntu-22.04
+    timeout-minutes: 60 # 1 hour max
     environment: 'Python script'
     
     env:
