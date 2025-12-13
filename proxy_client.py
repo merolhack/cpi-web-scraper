@@ -27,20 +27,35 @@ class ProxyRotator:
             return None
 
         try:
-            response = self.client.rpc("get_best_proxy_mx", {}).execute()
-            if response.data:
-                proxy_data = response.data
-                # Construct URL
-                protocol = proxy_data.get('protocol', 'http')
-                ip = proxy_data.get('ip_address')
-                port = proxy_data.get('port')
-                proxy_data['url'] = f"{protocol}://{ip}:{port}"
-                return proxy_data
+            # Direct query to bypass RPC country restriction - get any active proxy
+            response = self.client.table("proxies") \
+                .select("*") \
+                .eq("status", "active") \
+                .order("last_checked", desc=True) \
+                .limit(1) \
+                .execute()
+                
+            if response.data and len(response.data) > 0:
+                proxy_record = response.data[0]
+                # Note: self.current_proxy is not initialized in __init__ in the original code,
+                # but the provided snippet uses it. Assuming it's intended to be an instance variable.
+                self.current_proxy = {
+                    "url": f"{proxy_record['protocol']}://{proxy_record['ip_address']}:{proxy_record['port']}",
+                    "proxy_id": proxy_record['id']
+                }
+                return self.current_proxy
             else:
                 logger.warning("No active proxies available in DB.")
+                # Note: self.current_proxy is not initialized in __init__ in the original code,
+                # but the provided snippet uses it. Assuming it's intended to be an instance variable.
+                self.current_proxy = None
                 return None
+
         except Exception as e:
-            logger.error(f"Failed to get proxy from DB: {e}")
+            logger.error(f"Error fetching proxy: {e}")
+            # Note: self.current_proxy is not initialized in __init__ in the original code,
+            # but the provided snippet uses it. Assuming it's intended to be an instance variable.
+            self.current_proxy = None
             return None
 
     def report_failure(self, proxy_id: int):

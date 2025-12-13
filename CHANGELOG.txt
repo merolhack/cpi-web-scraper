@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.26] - 2025-12-12
+- Increased scraper frequency to hourly (was every 4 hours).
+- Scraper now runs with `--all` flag by default to process all products every hour.
+
+## [0.1.25] - 2025-12-12
+- Fixed Proxy Client to query `active` proxies directly from database, bypassing the MX-only restriction of `get_best_proxy_mx` RPC. This enables scraping with non-MX Americas proxies.
+- Added "Wal-Mart" to the Scraper Registry to match the establishment name in the database.
+
 ## [0.1.24] - 2025-12-12
 - Enhanced logging in `main.py` to list all fetched establishments and their IDs/Names.
 - Changed "No scraper implemented" log level from DEBUG to WARNING to expose configuration mismatches.

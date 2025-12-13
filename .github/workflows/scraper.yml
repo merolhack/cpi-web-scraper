@@ -2,7 +2,7 @@ name: Hybrid Scraper
 
 on:
   schedule:
-    - cron: '0 */4 * * *' # Every 4 hours
+    - cron: '0 * * * *' # Every hour
   workflow_dispatch: # Manual trigger
     inputs:
       product_id:

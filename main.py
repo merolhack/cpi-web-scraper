@@ -489,6 +489,7 @@ async def fetch_specific_product(client: Client, product_id: int) -> List[Dict[s
 # Maps establishment names (from DB) to scraper functions.
 SCRAPER_REGISTRY = {
     "Walmart": scrape_walmart,
+    "Wal-Mart": scrape_walmart, # Match DB Name
     "Bodega Aurrera": scrape_bodega,
     "Chedraui": scrape_chedraui,
     "Soriana": scrape_soriana,
