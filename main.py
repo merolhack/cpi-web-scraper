@@ -54,6 +54,8 @@ async def fetch_establishments(client: Client) -> List[Dict[str, Any]]:
         response = client.table("cpi_establishments").select("*").execute()
         establishments = response.data
         logger.info(f"Fetched {len(establishments)} establishments from DB.")
+        for est in establishments:
+            logger.info(f"Establishment Found: ID={est.get('establishment_id')}, Name='{est.get('establishment_name')}'")
         return establishments
     except Exception as e:
         logger.error(f"Failed to fetch establishments: {e}")
@@ -544,7 +546,7 @@ async def main():
                 scraper_func = SCRAPER_REGISTRY.get(est_name)
                 
                 if not scraper_func:
-                    logger.debug(f"No scraper implemented for {est_name}. Skipping.")
+                    logger.warning(f"No scraper implemented for '{est_name}'. Skipping. (Available: {list(SCRAPER_REGISTRY.keys())})")
                     continue
                 
                 # Check if price exists

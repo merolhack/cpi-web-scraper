@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.24] - 2025-12-12
+- Enhanced logging in `main.py` to list all fetched establishments and their IDs/Names.
+- Changed "No scraper implemented" log level from DEBUG to WARNING to expose configuration mismatches.
+
 ## [0.1.23] - 2025-12-11
 - Expanded proxy harvester to include North and Central American countries (US, MX, GT, SV, HN, CR, NI, PA, BZ) instead of Mexico only.
 - This significantly increases the available proxy pool for web scraping.
