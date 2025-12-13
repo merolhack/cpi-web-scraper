@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.28] - 2025-12-13
+- Fixed `KeyError: 'id'` in `proxy_client.py` by correcting the column name reference to `proxy_id`.
+- This resolves the issue where valid proxies were failing to be used by the scraper.
+
 ## [0.1.27] - 2025-12-13
 - Fixed critical bug in `proxy_client.py` where it was querying non-existent table "proxies" instead of "cpi_proxies".
 - Addressed `PGRST205` error in GitHub Actions by identifying missing database table `cpi_proxies`.

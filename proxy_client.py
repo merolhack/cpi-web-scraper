@@ -41,7 +41,7 @@ class ProxyRotator:
                 # but the provided snippet uses it. Assuming it's intended to be an instance variable.
                 self.current_proxy = {
                     "url": f"{proxy_record['protocol']}://{proxy_record['ip_address']}:{proxy_record['port']}",
-                    "proxy_id": proxy_record['id']
+                    "proxy_id": proxy_record['proxy_id']
                 }
                 return self.current_proxy
             else:
